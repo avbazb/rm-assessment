@@ -1,0 +1,24 @@
+{
+  "source_sha256": "832ab71ce10f938029cd65f03f07ec7ba9bf57c13e20fe777f66b0a04f7f9ce8",
+  "onnx_sha256": "5ad019952bf860dcab8734ee05d2bd03dc9c8092d33e4c8953620767da520133",
+  "bytes": 10884166,
+  "settings": {
+    "format": "onnx",
+    "imgsz": 960,
+    "batch": 1,
+    "dynamic": true,
+    "simplify": false,
+    "opset": 17,
+    "half": false,
+    "nms": false,
+    "device": "cpu"
+  },
+  "versions": {
+    "python": "3.12.8 (tags/v3.12.8:2dc476b, Dec  3 2024, 19:30:04) [MSC v.1942 64 bit (AMD64)]",
+    "ultralytics": "8.4.166",
+    "torch": "2.10.0+cu128",
+    "onnx": "1.17.0"
+  },
+  "elapsed_s": 1.4897115000057966,
+  "source_unchanged": true
+}

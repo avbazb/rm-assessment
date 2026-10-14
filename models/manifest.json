@@ -1,0 +1,22 @@
+{
+  "schema": "rm-assessment.models.v1",
+  "files": [
+    {
+      "path": "models/recommended.onnx",
+      "bytes": 10884166,
+      "sha256": "5ad019952bf860dcab8734ee05d2bd03dc9c8092d33e4c8953620767da520133",
+      "runtime_target": "src/preview/app/assets/models/recommended.onnx"
+    },
+    {
+      "path": "models/recommended.pt",
+      "bytes": 5945306,
+      "sha256": "832ab71ce10f938029cd65f03f07ec7ba9bf57c13e20fe777f66b0a04f7f9ce8"
+    },
+    {
+      "path": "models/recommended.json",
+      "bytes": 675,
+      "sha256": "d44ddeda0d54ca445423ca34099b98b6dd7255881a00b00a814f97eceb81e780",
+      "runtime_target": "src/preview/app/assets/models/recommended.json"
+    }
+  ]
+}

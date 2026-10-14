@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+build/
+dist/
+uploads/
+runtime-data/
+*.log
+src/preview/app/backend/classical/**/*.npz
+src/preview/app/backend/classical/*.npz
+src/preview/app/assets/models/*.onnx
+src/preview/app/assets/models/*.pt
+src/preview/app/assets/samples/
+src/preview/app/assets/bin/

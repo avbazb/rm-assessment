@@ -1,0 +1,101 @@
+"""Single-file Windows application entry point."""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import time
+import webbrowser
+
+ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT/'app/backend'))
+os.environ.setdefault('OPENBLAS_NUM_THREADS','1')
+os.environ.setdefault('OMP_NUM_THREADS','1')
+
+
+def main():
+    parser = argparse.ArgumentParser(description='ASTRA 视觉预览')
+    parser.add_argument('--no-browser', action='store_true')
+    parser.add_argument('--port', type=int, default=0)
+    parser.add_argument('--data-dir', type=Path)
+    parser.add_argument('--health-file', type=Path)
+    parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--self-test-output', type=Path)
+    parser.add_argument('--self-test-mode', choices=['fusion','classical'], default='fusion')
+    args = parser.parse_args()
+    data = args.data_dir or Path(os.environ.get('LOCALAPPDATA', str(Path.home())))/'AstraVision'
+    data.mkdir(parents=True, exist_ok=True)
+    # Windowless builds have no stdio; libraries still receive writable handles.
+    if sys.stdout is None:
+        sys.stdout = (data/'runtime.log').open('a', encoding='utf-8')
+    if sys.stderr is None:
+        sys.stderr = sys.stdout
+    if args.self_test:
+        from runtime.engine import Engine
+        engine = Engine(ROOT/'app/assets/models/recommended.onnx')
+        try:
+            sample = next(row for row in json.loads((ROOT/'app/assets/samples/catalog.json').read_text('utf-8')) if row['kind']=='image')
+            out = engine.analyze((ROOT/'app/assets/samples'/sample['file']).read_bytes(), 'self-test', 0, 0, 0.,mode=args.self_test_mode)
+            if not out['observations']:
+                raise RuntimeError('内置蓝板自检未得到装甲板')
+            report = dict(status='passed', device='CPU', frozen=bool(getattr(sys, 'frozen', False)),
+                          torch_loaded='torch' in sys.modules, observations=len(out['observations']),
+                          geometry=sum(o['geometry_valid'] for o in out['observations']),
+                          processing_ms=out['processing_ms'], input_frame=out['input_frame'],
+                          inference_providers=engine.detector.neural.session.get_providers() if engine.detector.neural else [],
+                          classical_module=out['classical_module'],detection_mode=args.self_test_mode,
+                          neural_model_used=out['neural_model_used'],math_backend=out['math_backend'])
+            text = json.dumps(report, ensure_ascii=False, indent=2)
+            if args.self_test_output:
+                args.self_test_output.parent.mkdir(parents=True, exist_ok=True)
+                args.self_test_output.write_text(text, encoding='utf-8')
+            print(text)
+        finally:
+            engine.close()
+        return
+    if not args.no_browser and args.port == 0:
+        # A second double-click reopens this user's running preview.
+        # Verification is loopback-only and cannot redirect to a saved URL.
+        try:
+            from urllib.parse import urlsplit
+            from urllib.request import urlopen
+            previous = json.loads((data/'last-session.json').read_text('utf-8'))
+            parsed = urlsplit(previous['url'])
+            if parsed.scheme == 'http' and parsed.hostname == '127.0.0.1' and parsed.port and parsed.path in ('', '/'):
+                with urlopen(previous['url']+'/api/health', timeout=.75) as response:
+                    running = json.load(response)
+                if (running.get('app') == 'astra-portable-vision' and running.get('version') == '1.2.0'
+                        and running.get('classical_module') == 'fast_color_geometry_roi_v2'):
+                    webbrowser.open(previous['url'])
+                    return
+        except (OSError, ValueError, KeyError):
+            pass
+    from runtime.server import Application
+    server = Application(ROOT, data, args.port)
+    if args.health_file:
+        args.health_file.parent.mkdir(parents=True, exist_ok=True)
+        args.health_file.write_text(json.dumps({'url': server.url, 'pid': os.getpid(), 'status': 'serving'}), encoding='utf-8')
+    (data/'last-session.json').write_text(json.dumps({'url': server.url, 'pid': os.getpid()}), encoding='utf-8')
+    if not args.no_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever(poll_interval=.2)
+    finally:
+        server.engine.close()
+        server.server_close()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception:
+        import traceback
+        error = traceback.format_exc()
+        root = Path(os.environ.get('LOCALAPPDATA', tempfile.gettempdir()))/'AstraVision'
+        root.mkdir(parents=True, exist_ok=True)
+        (root/'startup-error.log').write_text(error, encoding='utf-8')
+        if getattr(sys, 'frozen', False) and '--no-browser' not in sys.argv and '--self-test' not in sys.argv:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, '程序启动失败，错误记录已保存到 '+str(root/'startup-error.log'), 'ASTRA', 0x10)
+        raise
