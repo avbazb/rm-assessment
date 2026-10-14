@@ -132,6 +132,8 @@ class DigitEvidence:
             raise ValueError("invalid digit method or threshold")
         self.method, self.threshold = method, threshold
         assets = Path(assets)
+        if not (assets/'manifest.json').is_file():
+            raise ValueError("未提供数字识别资源，请使用 digit_method='off' 或提供完整资源目录")
         self.manifest = json.loads((assets/"manifest.json").read_text(encoding="utf-8"))
         self.labels = self.manifest["classes"]
         name = "templates.npz" if method == "template" else "weights.pt"

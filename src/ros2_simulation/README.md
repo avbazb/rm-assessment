@@ -31,6 +31,13 @@ RMUC_MODEL_DIR=/path/to/rmuc2026_v20_native bash run.sh launch
 
 无界面运行：`run.ps1 -Headless` 或 `bash run.sh launch gui:=false rviz:=false`。重新编译：`run.ps1 -Action build`。端口及工作空间可用 `GAZEBO_MASTER_URI`、`ROS_DOMAIN_ID` 和 `RMUC_WORKSPACE` 环境变量设置。
 
+Windows 启动脚本会将这些设置传入 WSL；`RMUC_WORKSPACE` 使用 Linux 路径。更换仓库目录时，可设置一个新的工作空间，避免复用另一个目录的编译缓存：
+
+```powershell
+$env:RMUC_WORKSPACE='/tmp/rm-assessment-workspace'
+.\run.ps1 -ModelDir '你的模型目录\rmuc2026_v20_native'
+```
+
 ## 三车独立控制
 
 另开 ROS 2 终端：

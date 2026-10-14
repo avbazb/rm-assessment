@@ -121,7 +121,8 @@ class CompetitionDetector:
         self.legacy_fallback = ColorCoreDetector() if lamp_method=="bright" and config is None else None
         self.last_diagnostics = {}
         if digit_method=="auto":
-            digit_method="template" if mode=="classical" else "off"
+            # The standalone release uses color/geometry without a digit asset bank.
+            digit_method="off"
         if digit_method not in ("off","template","model") or (mode=="classical" and digit_method=="model"):
             raise ValueError("pure classical mode cannot use a digit model")
         # Model-backed detection uses model/color/geometry evidence only. Even
