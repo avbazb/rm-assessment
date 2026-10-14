@@ -1,0 +1,885 @@
+<?xml version='1.0' encoding='utf-8'?>
+<sdf version="1.6">
+  <world name="rmuc26_assessment">
+    <gravity>0 0 -9.81</gravity>
+    <physics type="ode">
+      <max_step_size>.002</max_step_size>
+      <real_time_update_rate>500</real_time_update_rate>
+    </physics>
+    <scene>
+      <ambient>.7 .7 .7 1</ambient>
+      <background>.8 .82 .85 1</background>
+      <shadows>false</shadows>
+    </scene>
+    <include>
+      <uri>model://rmuc2026_v20_native</uri>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+    <model name="astra_car1">
+      <pose>4 -0.7 -0.08595416269999999 0 0 0</pose>
+      <link name="base_link">
+        <inertial>
+          <mass>4</mass>
+          <inertia>
+            <ixx>.07</ixx>
+            <iyy>.08</iyy>
+            <izz>.1</izz>
+          </inertia>
+        </inertial>
+        <visual name="body">
+          <pose>0 0 .12 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.6 .48 .24</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>.12 .14 .16 1</ambient>
+            <diffuse>.12 .14 .16 1</diffuse>
+            <emissive>.12 .14 .16 1</emissive>
+          </material>
+        </visual>
+        <collision name="body">
+          <pose>0 0 .12 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.6 .48 .24</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="plate">
+          <pose>-.316 0 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.025 .29 .16</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>.02 .02 .02 1</ambient>
+            <diffuse>.02 .02 .02 1</diffuse>
+            <emissive>.02 .02 .02 1</emissive>
+          </material>
+        </visual>
+        <visual name="light_-1">
+          <pose>-.334 -0.125 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.035 .025 .14</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.9 0.02 0.01 1</ambient>
+            <diffuse>0.9 0.02 0.01 1</diffuse>
+            <emissive>0.9 0.02 0.01 1</emissive>
+          </material>
+        </visual>
+        <visual name="light_1">
+          <pose>-.334 0.125 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.035 .025 .14</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.9 0.02 0.01 1</ambient>
+            <diffuse>0.9 0.02 0.01 1</diffuse>
+            <emissive>0.9 0.02 0.01 1</emissive>
+          </material>
+        </visual>
+      </link>
+      <link name="left_wheel">
+        <pose>0 0.28 0 1.57079632679 0 0</pose>
+        <inertial>
+          <mass>.15</mass>
+          <inertia>
+            <ixx>.001</ixx>
+            <iyy>.001</iyy>
+            <izz>.001</izz>
+          </inertia>
+        </inertial>
+        <visual name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>.03 .03 .03 1</ambient>
+            <diffuse>.03 .03 .03 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="left_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>left_wheel</child>
+        <axis>
+          <xyz>0 0 -1</xyz>
+          <limit>
+            <lower>-1e16</lower>
+            <upper>1e16</upper>
+          </limit>
+        </axis>
+      </joint>
+      <link name="right_wheel">
+        <pose>0 -0.28 0 1.57079632679 0 0</pose>
+        <inertial>
+          <mass>.15</mass>
+          <inertia>
+            <ixx>.001</ixx>
+            <iyy>.001</iyy>
+            <izz>.001</izz>
+          </inertia>
+        </inertial>
+        <visual name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>.03 .03 .03 1</ambient>
+            <diffuse>.03 .03 .03 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="right_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>right_wheel</child>
+        <axis>
+          <xyz>0 0 -1</xyz>
+          <limit>
+            <lower>-1e16</lower>
+            <upper>1e16</upper>
+          </limit>
+        </axis>
+      </joint>
+      <link name="caster0">
+        <pose>-0.22 0 -.06 0 0 0</pose>
+        <inertial>
+          <mass>.01</mass>
+          <inertia>
+            <ixx>.0001</ixx>
+            <iyy>.0001</iyy>
+            <izz>.0001</izz>
+          </inertia>
+        </inertial>
+        <collision name="caster">
+          <geometry>
+            <sphere>
+              <radius>.05</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0</mu>
+                <mu2>0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="caster0_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>caster0</child>
+      </joint>
+      <link name="caster1">
+        <pose>0.22 0 -.06 0 0 0</pose>
+        <inertial>
+          <mass>.01</mass>
+          <inertia>
+            <ixx>.0001</ixx>
+            <iyy>.0001</iyy>
+            <izz>.0001</izz>
+          </inertia>
+        </inertial>
+        <collision name="caster">
+          <geometry>
+            <sphere>
+              <radius>.05</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0</mu>
+                <mu2>0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="caster1_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>caster1</child>
+      </joint>
+      <plugin name="drive" filename="libgazebo_ros_diff_drive.so">
+        <ros>
+          <namespace>/assessment/car1</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <left_joint>left_joint</left_joint>
+        <right_joint>right_joint</right_joint>
+        <wheel_separation>.56</wheel_separation>
+        <wheel_diameter>.22</wheel_diameter>
+        <max_wheel_torque>10</max_wheel_torque>
+        <max_wheel_acceleration>2</max_wheel_acceleration>
+        <publish_odom>true</publish_odom>
+        <publish_odom_tf>true</publish_odom_tf>
+        <publish_wheel_tf>false</publish_wheel_tf>
+        <odometry_frame>car1/odom</odometry_frame>
+        <robot_base_frame>car1/base_link</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="astra_car2">
+      <pose>5 0.4 -0.057149674 0 0 0</pose>
+      <link name="base_link">
+        <inertial>
+          <mass>4</mass>
+          <inertia>
+            <ixx>.07</ixx>
+            <iyy>.08</iyy>
+            <izz>.1</izz>
+          </inertia>
+        </inertial>
+        <visual name="body">
+          <pose>0 0 .12 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.6 .48 .24</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>.12 .14 .16 1</ambient>
+            <diffuse>.12 .14 .16 1</diffuse>
+            <emissive>.12 .14 .16 1</emissive>
+          </material>
+        </visual>
+        <collision name="body">
+          <pose>0 0 .12 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.6 .48 .24</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="plate">
+          <pose>-.316 0 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.025 .29 .16</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>.02 .02 .02 1</ambient>
+            <diffuse>.02 .02 .02 1</diffuse>
+            <emissive>.02 .02 .02 1</emissive>
+          </material>
+        </visual>
+        <visual name="light_-1">
+          <pose>-.334 -0.125 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.035 .025 .14</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.01 0.05 1 1</ambient>
+            <diffuse>0.01 0.05 1 1</diffuse>
+            <emissive>0.01 0.05 1 1</emissive>
+          </material>
+        </visual>
+        <visual name="light_1">
+          <pose>-.334 0.125 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.035 .025 .14</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.01 0.05 1 1</ambient>
+            <diffuse>0.01 0.05 1 1</diffuse>
+            <emissive>0.01 0.05 1 1</emissive>
+          </material>
+        </visual>
+      </link>
+      <link name="left_wheel">
+        <pose>0 0.28 0 1.57079632679 0 0</pose>
+        <inertial>
+          <mass>.15</mass>
+          <inertia>
+            <ixx>.001</ixx>
+            <iyy>.001</iyy>
+            <izz>.001</izz>
+          </inertia>
+        </inertial>
+        <visual name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>.03 .03 .03 1</ambient>
+            <diffuse>.03 .03 .03 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="left_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>left_wheel</child>
+        <axis>
+          <xyz>0 0 -1</xyz>
+          <limit>
+            <lower>-1e16</lower>
+            <upper>1e16</upper>
+          </limit>
+        </axis>
+      </joint>
+      <link name="right_wheel">
+        <pose>0 -0.28 0 1.57079632679 0 0</pose>
+        <inertial>
+          <mass>.15</mass>
+          <inertia>
+            <ixx>.001</ixx>
+            <iyy>.001</iyy>
+            <izz>.001</izz>
+          </inertia>
+        </inertial>
+        <visual name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>.03 .03 .03 1</ambient>
+            <diffuse>.03 .03 .03 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="right_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>right_wheel</child>
+        <axis>
+          <xyz>0 0 -1</xyz>
+          <limit>
+            <lower>-1e16</lower>
+            <upper>1e16</upper>
+          </limit>
+        </axis>
+      </joint>
+      <link name="caster0">
+        <pose>-0.22 0 -.06 0 0 0</pose>
+        <inertial>
+          <mass>.01</mass>
+          <inertia>
+            <ixx>.0001</ixx>
+            <iyy>.0001</iyy>
+            <izz>.0001</izz>
+          </inertia>
+        </inertial>
+        <collision name="caster">
+          <geometry>
+            <sphere>
+              <radius>.05</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0</mu>
+                <mu2>0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="caster0_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>caster0</child>
+      </joint>
+      <link name="caster1">
+        <pose>0.22 0 -.06 0 0 0</pose>
+        <inertial>
+          <mass>.01</mass>
+          <inertia>
+            <ixx>.0001</ixx>
+            <iyy>.0001</iyy>
+            <izz>.0001</izz>
+          </inertia>
+        </inertial>
+        <collision name="caster">
+          <geometry>
+            <sphere>
+              <radius>.05</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0</mu>
+                <mu2>0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="caster1_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>caster1</child>
+      </joint>
+      <plugin name="drive" filename="libgazebo_ros_diff_drive.so">
+        <ros>
+          <namespace>/assessment/car2</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <left_joint>left_joint</left_joint>
+        <right_joint>right_joint</right_joint>
+        <wheel_separation>.56</wheel_separation>
+        <wheel_diameter>.22</wheel_diameter>
+        <max_wheel_torque>10</max_wheel_torque>
+        <max_wheel_acceleration>2</max_wheel_acceleration>
+        <publish_odom>true</publish_odom>
+        <publish_odom_tf>true</publish_odom_tf>
+        <publish_wheel_tf>false</publish_wheel_tf>
+        <odometry_frame>car2/odom</odometry_frame>
+        <robot_base_frame>car2/base_link</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="astra_car3">
+      <pose>4 1.5 -0.02834518030000001 0 0 0</pose>
+      <link name="base_link">
+        <inertial>
+          <mass>4</mass>
+          <inertia>
+            <ixx>.07</ixx>
+            <iyy>.08</iyy>
+            <izz>.1</izz>
+          </inertia>
+        </inertial>
+        <visual name="body">
+          <pose>0 0 .12 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.6 .48 .24</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>.12 .14 .16 1</ambient>
+            <diffuse>.12 .14 .16 1</diffuse>
+            <emissive>.12 .14 .16 1</emissive>
+          </material>
+        </visual>
+        <collision name="body">
+          <pose>0 0 .12 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.6 .48 .24</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="plate">
+          <pose>-.316 0 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.025 .29 .16</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>.02 .02 .02 1</ambient>
+            <diffuse>.02 .02 .02 1</diffuse>
+            <emissive>.02 .02 .02 1</emissive>
+          </material>
+        </visual>
+        <visual name="light_-1">
+          <pose>-.334 -0.125 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.035 .025 .14</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.9 0.02 0.01 1</ambient>
+            <diffuse>0.9 0.02 0.01 1</diffuse>
+            <emissive>0.9 0.02 0.01 1</emissive>
+          </material>
+        </visual>
+        <visual name="light_1">
+          <pose>-.334 0.125 .3 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>.035 .025 .14</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.9 0.02 0.01 1</ambient>
+            <diffuse>0.9 0.02 0.01 1</diffuse>
+            <emissive>0.9 0.02 0.01 1</emissive>
+          </material>
+        </visual>
+      </link>
+      <link name="left_wheel">
+        <pose>0 0.28 0 1.57079632679 0 0</pose>
+        <inertial>
+          <mass>.15</mass>
+          <inertia>
+            <ixx>.001</ixx>
+            <iyy>.001</iyy>
+            <izz>.001</izz>
+          </inertia>
+        </inertial>
+        <visual name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>.03 .03 .03 1</ambient>
+            <diffuse>.03 .03 .03 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="left_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>left_wheel</child>
+        <axis>
+          <xyz>0 0 -1</xyz>
+          <limit>
+            <lower>-1e16</lower>
+            <upper>1e16</upper>
+          </limit>
+        </axis>
+      </joint>
+      <link name="right_wheel">
+        <pose>0 -0.28 0 1.57079632679 0 0</pose>
+        <inertial>
+          <mass>.15</mass>
+          <inertia>
+            <ixx>.001</ixx>
+            <iyy>.001</iyy>
+            <izz>.001</izz>
+          </inertia>
+        </inertial>
+        <visual name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>.03 .03 .03 1</ambient>
+            <diffuse>.03 .03 .03 1</diffuse>
+          </material>
+        </visual>
+        <collision name="wheel">
+          <geometry>
+            <cylinder>
+              <radius>.11</radius>
+              <length>.045</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="right_joint" type="revolute">
+        <parent>base_link</parent>
+        <child>right_wheel</child>
+        <axis>
+          <xyz>0 0 -1</xyz>
+          <limit>
+            <lower>-1e16</lower>
+            <upper>1e16</upper>
+          </limit>
+        </axis>
+      </joint>
+      <link name="caster0">
+        <pose>-0.22 0 -.06 0 0 0</pose>
+        <inertial>
+          <mass>.01</mass>
+          <inertia>
+            <ixx>.0001</ixx>
+            <iyy>.0001</iyy>
+            <izz>.0001</izz>
+          </inertia>
+        </inertial>
+        <collision name="caster">
+          <geometry>
+            <sphere>
+              <radius>.05</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0</mu>
+                <mu2>0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="caster0_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>caster0</child>
+      </joint>
+      <link name="caster1">
+        <pose>0.22 0 -.06 0 0 0</pose>
+        <inertial>
+          <mass>.01</mass>
+          <inertia>
+            <ixx>.0001</ixx>
+            <iyy>.0001</iyy>
+            <izz>.0001</izz>
+          </inertia>
+        </inertial>
+        <collision name="caster">
+          <geometry>
+            <sphere>
+              <radius>.05</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0</mu>
+                <mu2>0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+      <joint name="caster1_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>caster1</child>
+      </joint>
+      <plugin name="drive" filename="libgazebo_ros_diff_drive.so">
+        <ros>
+          <namespace>/assessment/car3</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <left_joint>left_joint</left_joint>
+        <right_joint>right_joint</right_joint>
+        <wheel_separation>.56</wheel_separation>
+        <wheel_diameter>.22</wheel_diameter>
+        <max_wheel_torque>10</max_wheel_torque>
+        <max_wheel_acceleration>2</max_wheel_acceleration>
+        <publish_odom>true</publish_odom>
+        <publish_odom_tf>true</publish_odom_tf>
+        <publish_wheel_tf>false</publish_wheel_tf>
+        <odometry_frame>car3/odom</odometry_frame>
+        <robot_base_frame>car3/base_link</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="astra_sensor_rig">
+      <static>true</static>
+      <pose>0 0.4 -0.1691496849 0 0 0</pose>
+      <link name="rig">
+        <sensor name="camera" type="camera">
+          <pose>0 0 .41 0 0 0</pose>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <camera>
+            <horizontal_fov>1.0471975511965976</horizontal_fov>
+            <image>
+              <width>640</width>
+              <height>480</height>
+              <format>R8G8B8</format>
+            </image>
+            <clip>
+              <near>0.1</near>
+              <far>100</far>
+            </clip>
+          </camera>
+          <plugin name="camera" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/assessment</namespace>
+              <remapping>image_raw:=camera/image_raw</remapping>
+              <remapping>camera_info:=camera/camera_info</remapping>
+            </ros>
+            <camera_name>camera</camera_name>
+            <frame_name>astra_camera_optical</frame_name>
+          </plugin>
+        </sensor>
+        <sensor name="lidar" type="ray">
+          <pose>0 0 .27 0 0 0</pose>
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <ray>
+            <scan>
+              <horizontal>
+                <samples>50</samples>
+                <resolution>1</resolution>
+                <min_angle>-0.6143558967020041</min_angle>
+                <max_angle>0.6143558967020041</max_angle>
+              </horizontal>
+              <vertical>
+                <samples>1</samples>
+                <resolution>1</resolution>
+                <min_angle>0</min_angle>
+                <max_angle>0</max_angle>
+              </vertical>
+            </scan>
+            <range>
+              <min>0.05</min>
+              <max>90</max>
+              <resolution>0.01</resolution>
+            </range>
+            <noise>
+              <type>gaussian</type>
+              <mean>0</mean>
+              <stddev>.003</stddev>
+            </noise>
+          </ray>
+          <plugin name="lidar" filename="libgazebo_ros_ray_sensor.so">
+            <ros>
+              <namespace>/assessment</namespace>
+              <remapping>~/out:=lidar/scan</remapping>
+            </ros>
+            <output_type>sensor_msgs/LaserScan</output_type>
+            <frame_name>astra_lidar</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+    <model name="astra_overview">
+      <static>true</static>
+      <link name="camera">
+        <pose>10 2.624344 40 0 1.57079632679 0</pose>
+        <sensor name="overview" type="camera">
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <camera>
+            <horizontal_fov>1.0471975511965976</horizontal_fov>
+            <image>
+              <width>640</width>
+              <height>480</height>
+              <format>R8G8B8</format>
+            </image>
+            <clip>
+              <near>0.1</near>
+              <far>100</far>
+            </clip>
+          </camera>
+          <plugin name="overview" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/assessment/overview</namespace>
+            </ros>
+            <camera_name>overview</camera_name>
+            <frame_name>astra_overview</frame_name>
+          </plugin>
+        </sensor>
+      </link>
+    </model>
+    <gui>
+      <camera name="user_camera">
+        <pose>-18 -22 24 0 0.55 0.62</pose>
+      </camera>
+    </gui>
+    <light name="assessment_sun" type="directional">
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.7 0.7 0.7 1</diffuse>
+      <direction>-0.2 0.1 -1</direction>
+    </light>
+    <plugin name="assessment_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/assessment</namespace>
+      </ros>
+      <update_rate>30</update_rate>
+    </plugin>
+  </world>
+</sdf>

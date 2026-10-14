@@ -1,0 +1,40 @@
+{
+  "image_width": 640,
+  "image_height": 480,
+  "camera_matrix": [
+    [
+      554.254691191187,
+      0.0,
+      320.5
+    ],
+    [
+      0.0,
+      554.254691191187,
+      240.5
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "distortion_coefficients": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "reference_profile": "rm_vision_small",
+  "lamp_reference_mm": [
+    135.0,
+    55.0
+  ],
+  "reference_source": "https://github.com/chenjunnn/rm_auto_aim/blob/main/armor_detector/include/armor_detector/pnp_solver.hpp",
+  "max_reprojection_px": 3.0,
+  "intrinsics_source": "gazebo_camera_info_assessment_20261012",
+  "frame": "camera_optical: x right, y down, z forward",
+  "corner_order": "TL TR BR BL",
+  "rotation": "Rodrigues axis-angle vector in radians; not Euler angles",
+  "note": "Exact simulated CameraInfo; not real-camera calibration. No old (-1,-1) scoring registration applied."
+}

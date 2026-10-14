@@ -13,3 +13,9 @@ src/preview/app/backend/classical/*.npz
 src/preview/app/assets/models/
 src/preview/app/assets/samples/
 src/preview/app/assets/bin/
+src/ros2_simulation/evidence/
+src/ros2_simulation/install/
+src/ros2_simulation/log/
+models/rmuc2026_v20_native/meshes/
+models/rmuc2026_v20_native/model.sdf
+models/rmuc2026_v20_native/model.config

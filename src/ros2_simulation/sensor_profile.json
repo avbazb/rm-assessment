@@ -1,0 +1,45 @@
+{
+  "camera": {
+    "horizontal_fov_deg": 60,
+    "width": 640,
+    "height": 480,
+    "format": "RGB8",
+    "near_m": 0.1,
+    "far_m": 100,
+    "theoretical_K": [
+      [
+        554.2562584220408,
+        0,
+        320
+      ],
+      [
+        0,
+        554.2562584220408,
+        240
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
+    "distortion": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "note": "Runtime CameraInfo is authoritative for Gazebo pixel convention; not a real-camera calibration"
+  },
+  "lidar": {
+    "horizontal_fov_deg": 70.4,
+    "horizontal_samples": 50,
+    "vertical_samples": 1,
+    "resolution": 1,
+    "range_min_m": 0.05,
+    "range_max_m": 90,
+    "range_resolution_m": 0.01,
+    "update_rate_hz": 10
+  }
+}
