@@ -36,7 +36,7 @@ class Application(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'AstraVision/1.2'
+    server_version = 'AstraVision/' + VERSION
     protocol_version = 'HTTP/1.1'
     disable_nagle_algorithm = True
 

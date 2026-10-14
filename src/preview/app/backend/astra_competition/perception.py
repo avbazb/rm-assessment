@@ -137,13 +137,16 @@ class CompetitionDetector:
             if neural_detector is None:
                 if weights is None:
                     raise ValueError("model weights required")
-                # Torch / Ultralytics are intentionally absent from the classical import path.
-                from astra_vision.neural import NeuralArmorDetector
-                from .regional_model import GuidedNeuralDetector
+                # Use the same shipped CPU backend as the preview; no Torch dependency.
+                from runtime.onnx_detector import GuidedOnnxDetector
                 from .guided_fusion import PROPOSAL_CONFIDENCE
                 proposal_confidence=min(confidence,PROPOSAL_CONFIDENCE) if mode=="fusion" else confidence
-                neural_class=GuidedNeuralDetector if mode=="fusion" else NeuralArmorDetector
-                neural_detector = neural_class(weights, device, proposal_confidence, "both", imgsz)
+                onnx_weights = Path(weights)
+                if onnx_weights.suffix.lower() == '.pt':
+                    onnx_weights = onnx_weights.with_suffix('.onnx')
+                if onnx_weights.suffix.lower() != '.onnx' or not onnx_weights.is_file():
+                    raise ValueError('需要 ONNX 模型；PT 权重需提供同名 ONNX 文件')
+                neural_detector = GuidedOnnxDetector(onnx_weights, device, proposal_confidence, "both", imgsz)
             self.neural = neural_detector
 
     @property
@@ -228,12 +231,17 @@ def verified_weights(root):
 
 def verified_weights_identity(root):
     """Keep the validated bytes' identity for callers that must report it."""
+    import hashlib
     import json
-    from .provenance import file_identity
-    folder = Path(root) / "models/audited-real-20260930-b23a2b787011"
-    weights = folder / "recommended.pt"
-    contract = json.loads((folder / "deployment.json").read_text(encoding="utf-8"))["models"]["model"]
-    identity = file_identity(weights)
+    root = Path(root).resolve()
+    manifest = json.loads((root / 'models/manifest.json').read_text(encoding='utf-8'))
+    contract = next(row for row in manifest['files'] if row['path'] == 'models/recommended.pt')
+    weights = (root / contract['path']).resolve()
+    if not weights.is_relative_to(root):
+        raise ValueError('模型清单路径无效')
+    with weights.open('rb') as stream:
+        checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
+    identity = dict(bytes=weights.stat().st_size, sha256=checksum)
     if identity["bytes"] != contract["bytes"] or identity["sha256"] != contract["sha256"]:
         raise ValueError("recommended model failed release verification")
     return weights, dict(status="verified", name=weights.name, **identity)

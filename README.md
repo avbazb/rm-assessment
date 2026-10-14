@@ -18,4 +18,22 @@
 └── requirements.txt      # Python依赖
 ```
 
-ROS 2 仿真启动与三车控制：[src/ros2_simulation](src/ros2_simulation/README.md)。
+## 运行视觉预览
+
+使用 64 位 Python 3.12 或更高版本。在仓库目录打开 PowerShell：
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe run.py
+```
+
+启动后自动打开本地网页，可上传图片或视频，查看检测、运动预测、三维位姿和落点偏差。源码仓库不附带演示素材，首次启动素材库为空。
+
+图片检测仅需上述 Python 依赖。视频上传还需要安装 FFmpeg，并确保 `ffmpeg` 和 `ffprobe` 都在 PATH 中。
+
+运行自检：`.\.venv\Scripts\python.exe run.py --self-test`。没有内置素材时使用空白图检查运行链路；也可用 `--self-test-image '图片路径'` 检查真实图片。
+
+## ROS 2 仿真
+
+仿真环境、地图准备、一键启动与三车控制见 [src/ros2_simulation](src/ros2_simulation/README.md)。

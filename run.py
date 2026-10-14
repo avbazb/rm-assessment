@@ -18,7 +18,7 @@ def prepare_models():
         if not source.is_relative_to(ROOT) or not target.is_relative_to(ROOT):
             raise RuntimeError('模型清单路径无效')
         if not source.is_file() or source.stat().st_size!=model['bytes']:
-            raise RuntimeError('模型文件未完整下载，请先运行 git lfs pull：'+model['path'])
+            raise RuntimeError('模型文件未完整下载，请重新下载或克隆完整仓库：'+model['path'])
         if sha(source)!=model['sha256']:raise RuntimeError('模型校验失败：'+model['path'])
         if target.exists():
             if target.stat().st_size!=model['bytes'] or sha(target)!=model['sha256']:

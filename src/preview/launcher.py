@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--health-file', type=Path)
     parser.add_argument('--self-test', action='store_true')
     parser.add_argument('--self-test-output', type=Path)
+    parser.add_argument('--self-test-image', type=Path)
     parser.add_argument('--self-test-mode', choices=['fusion','classical'], default='fusion')
     args = parser.parse_args()
     from runtime.windows_runtime import configure_cpu_scheduling
@@ -38,12 +39,28 @@ def main():
         from runtime.engine import Engine
         engine = Engine(ROOT/'app/assets/models/recommended.onnx')
         try:
-            sample = next(row for row in json.loads((ROOT/'app/assets/samples/catalog.json').read_text('utf-8')) if row['kind']=='image')
-            out = engine.analyze((ROOT/'app/assets/samples'/sample['file']).read_bytes(), 'self-test', 0, 0, 0.,mode=args.self_test_mode)
-            if not out['observations']:
+            sample = next((row for row in json.loads((ROOT/'app/assets/samples/catalog.json').read_text('utf-8'))
+                           if row['kind']=='image'), None)
+            if args.self_test_image:
+                payload = args.self_test_image.read_bytes()
+                test_input = 'external_image'
+            elif sample:
+                payload = (ROOT/'app/assets/samples'/sample['file']).read_bytes()
+                test_input = 'bundled_image'
+            else:
+                import cv2
+                import numpy as np
+                ok, encoded = cv2.imencode('.png', np.zeros((480, 640, 3), np.uint8))
+                if not ok:
+                    raise RuntimeError('自检图像生成失败')
+                payload = encoded.tobytes()
+                test_input = 'synthetic_blank_runtime_only'
+            out = engine.analyze(payload, 'self-test', 0, 0, 0.,mode=args.self_test_mode)
+            if test_input == 'bundled_image' and not out['observations']:
                 raise RuntimeError('内置蓝板自检未得到装甲板')
             report = dict(status='passed', device='CPU', frozen=bool(getattr(sys, 'frozen', False)),
                           torch_loaded='torch' in sys.modules, observations=len(out['observations']),
+                          test_input=test_input,
                           geometry=sum(o['geometry_valid'] for o in out['observations']),
                           processing_ms=out['processing_ms'], input_frame=out['input_frame'],
                           inference_providers=engine.detector.neural.session.get_providers() if engine.detector.neural else [],
