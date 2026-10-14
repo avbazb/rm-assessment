@@ -6,7 +6,7 @@ import math
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import cv2
 import numpy as np
@@ -27,15 +27,48 @@ class StaleFrame(ValueError):
     pass
 
 
+class InferenceTimeout(TimeoutError):
+    pass
+
+
 class Engine:
-    def __init__(self, model_path):
+    def __init__(self, model_path, request_timeout=8., warmup_timeout=30.):
         self.model_path = model_path
         self.detector = None
         self.sessions = {}
         self.lock = threading.Lock()
         self.worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix='astra-inference')
         self.closed = False
+        self.request_timeout = request_timeout
+        self.warmup_timeout = warmup_timeout
+        self.pending = None
+        self.task_started = None
+        self.last_error = None
         cv2.setNumThreads(1)
+
+    def health(self):
+        pending = self.pending is not None and not self.pending.done()
+        age = time.monotonic()-self.task_started if pending and self.task_started is not None else 0.
+        return {'status': 'busy' if pending else 'ready', 'inference_busy': pending,
+                'inference_age_s': age, 'last_error': self.last_error, 'closed': self.closed,
+                'model_ready': self.detector is not None and self.detector.neural is not None}
+
+    def _wait_task(self, function, *args, timeout):
+        if self.pending is not None and not self.pending.done():
+            raise Busy('上一帧仍在处理，请稍后重新检测；长时间无响应时重启程序')
+        future = self.worker.submit(function, *args)
+        self.pending = future
+        self.task_started = time.monotonic()
+        try:
+            result = future.result(timeout=timeout)
+            self.last_error = None
+            return result
+        except FutureTimeout as error:
+            self.last_error = 'inference_timeout'
+            raise InferenceTimeout('检测超时，请重新检测；持续超时请重启程序') from error
+        finally:
+            if future.done():
+                self.pending = None
 
     def _infer(self, image, timestamp, mode):
         if self.detector is None:
@@ -50,7 +83,7 @@ class Engine:
                 raise ValueError('程序已关闭')
             if self.detector is None:
                 self.detector = DetectionPipeline(self.model_path)
-            details=self.worker.submit(self.detector.warmup, mode).result()
+            details=self._wait_task(self.detector.warmup, mode, timeout=self.warmup_timeout)
             return {'status': 'ready', 'device': 'CPU', **details}
         finally:
             self.lock.release()
@@ -114,7 +147,11 @@ class Engine:
             else:
                 state = dict(epoch=epoch, signature=signature, tracker=ArmorTracker(),
                              forecaster=MotionForecaster(), poses=PoseContinuity(), orientations={})
-            observations,traditional,models = self.worker.submit(self._infer, image, timestamp, mode).result()
+            stage_started = time.perf_counter()
+            stages = {'decode_and_prepare_ms': (stage_started-started)*1000}
+            observations,traditional,models = self._wait_task(self._infer, image, timestamp, mode, timeout=self.request_timeout)
+            stages['detection_ms'] = (time.perf_counter()-stage_started)*1000
+            stage_started = time.perf_counter()
             measured = [tracking_measurement(o) for o in observations]
             # This guard affects PnP only. Detection admission, score, original
             # two-dimensional measurement and association remain unchanged.
@@ -128,7 +165,11 @@ class Engine:
                     obs['pose_geometry_guard'] = copy.deepcopy(safe['pose_geometry_guard'])
                 if 'pose_geometry_original' in safe:
                     obs['pose_geometry_original'] = copy.deepcopy(safe['pose_geometry_original'])
+            stages['pose_measurement_ms'] = (time.perf_counter()-stage_started)*1000
+            stage_started = time.perf_counter()
             tracked = state['tracker'].update(measured, timestamp, image)
+            stages['tracking_ms'] = (time.perf_counter()-stage_started)*1000
+            stage_started = time.perf_counter()
             tracks = [*tracked['tracks'], *tracked['tentative_tracks']]
             estimates = state['forecaster'].update(tracks, measured, timestamp, (w, h))
             state['poses'].update(tracks, pose_observations, timestamp, calibration)
@@ -148,12 +189,14 @@ class Engine:
                     obs['pose']['orientation_readout'] = readout
                     obs['pose']['orientation_status'] = readout['status']
             state['orientations'] = orientations
+            stages['state_and_pose_filter_ms'] = (time.perf_counter()-stage_started)*1000
             out = dict(timestamp=timestamp, sequence=sequence, epoch=epoch, width=w, height=h,
                        device='CPU', observations=observations, **tracked,
                        detection_mode=mode, classical_module=self.detector.VERSION,traditional_observations=traditional,
                        model_detections=models,detection_diagnostics=copy.deepcopy(self.detector.last_diagnostics),
                        motion_estimates=estimates, future_prediction=forecast(estimates, timestamp+horizon, (w, h)),
                        camera_calibration=calibration, processing_ms=(time.perf_counter()-started)*1000,
+                       stage_timings=stages,
                        input_frame=dict(pixel_sha256=digest, payload_sha256=hashlib.sha256(payload).hexdigest(),
                                         encoding=frame_encoding),
                        queue_capacity=0, cache_hit=False,
@@ -167,7 +210,7 @@ class Engine:
     def close(self):
         with self.lock:
             self.closed = True
-            self.worker.shutdown(wait=True, cancel_futures=True)
+            self.worker.shutdown(wait=False, cancel_futures=True)
             self.sessions.clear()
             self.detector = None
 

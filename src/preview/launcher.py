@@ -10,6 +10,7 @@ import webbrowser
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT/'app/backend'))
+from runtime.version import VERSION, BUILD_ID
 os.environ.setdefault('OPENBLAS_NUM_THREADS','1')
 os.environ.setdefault('OMP_NUM_THREADS','1')
 
@@ -24,7 +25,9 @@ def main():
     parser.add_argument('--self-test-output', type=Path)
     parser.add_argument('--self-test-mode', choices=['fusion','classical'], default='fusion')
     args = parser.parse_args()
-    data = args.data_dir or Path(os.environ.get('LOCALAPPDATA', str(Path.home())))/'AstraVision'
+    from runtime.windows_runtime import configure_cpu_scheduling
+    cpu_scheduling = configure_cpu_scheduling()
+    data = args.data_dir or Path(os.environ.get('LOCALAPPDATA', str(Path.home())))/'AstraVision'/VERSION
     data.mkdir(parents=True, exist_ok=True)
     # Windowless builds have no stdio; libraries still receive writable handles.
     if sys.stdout is None:
@@ -65,7 +68,9 @@ def main():
             if parsed.scheme == 'http' and parsed.hostname == '127.0.0.1' and parsed.port and parsed.path in ('', '/'):
                 with urlopen(previous['url']+'/api/health', timeout=.75) as response:
                     running = json.load(response)
-                if (running.get('app') == 'astra-portable-vision' and running.get('version') == '1.2.0'
+                if (running.get('app') == 'astra-portable-vision' and running.get('version') == VERSION
+                        and running.get('build_id') == BUILD_ID and not running.get('last_error')
+                        and not running.get('closed') and running.get('inference_age_s', 0) < 8
                         and running.get('classical_module') == 'fast_color_geometry_roi_v2'):
                     webbrowser.open(previous['url'])
                     return
@@ -73,6 +78,7 @@ def main():
             pass
     from runtime.server import Application
     server = Application(ROOT, data, args.port)
+    server.cpu_scheduling = cpu_scheduling
     if args.health_file:
         args.health_file.parent.mkdir(parents=True, exist_ok=True)
         args.health_file.write_text(json.dumps({'url': server.url, 'pid': os.getpid(), 'status': 'serving'}), encoding='utf-8')
@@ -84,6 +90,10 @@ def main():
     finally:
         server.engine.close()
         server.server_close()
+        if getattr(sys, 'frozen', False):
+            sys.stdout.flush()
+            # A timed-out native worker must not hold a windowless EXE open.
+            os._exit(0)
 
 
 if __name__ == '__main__':

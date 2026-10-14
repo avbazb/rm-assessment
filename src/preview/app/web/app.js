@@ -1,8 +1,11 @@
 /* ASTRA portable preview. No external runtime or network resources. */
 (() => {
   "use strict";
-  const impactPage = document.body.dataset.page === "impact";
-  const HORIZON = 0.15;
+  const page = document.body.dataset.page || "detection";
+  const impactPage = page === "impact";
+  const motionPage = page === "motion";
+  const posePage = page === "pose";
+  const pageTitle = {detection: "检测预览", motion: "运动预测", pose: "三维位姿", impact: "落点分析"}[page] || "检测预览";
   const $ = id => document.getElementById(id);
   const finite = value => typeof value === "number" && Number.isFinite(value);
   const pair = value => Array.isArray(value) && value.length >= 2 && value.slice(0, 2).every(finite);
@@ -40,7 +43,8 @@
     calibration: null, calibrationName: "默认参数", stream: null, pointMode: false,
     impactPoint: null, impactResult: null, cameraStart: null, lastCaptureTime: null, mediaFrame: null,
     processed: 0, startedAt: null, completions: [], lastRequest: null, requestHistory: [], timingHistory: [],
-    ready: false, preparedMode: null, preparingMode: null, imageReady: false, exporting: false
+    ready: false, preparedMode: null, preparingMode: null, imageReady: false, exporting: false,
+    horizon: 0.15, analysisController: null, failed: false
   };
   try {
     const saved = JSON.parse(localStorage.getItem("astra-calibration") || "null");
@@ -51,7 +55,9 @@
     <header class="topbar">
       <a class="brand" href="/">ASTRA <span>视觉实验</span></a>
       <nav class="navigation" aria-label="主导航">
-        <a href="/" ${!impactPage ? 'aria-current="page"' : ""}>检测预览</a>
+        <a href="/" ${page === "detection" ? 'aria-current="page"' : ""}>检测预览</a>
+        <a href="/motion.html" ${motionPage ? 'aria-current="page"' : ""}>运动预测</a>
+        <a href="/pose.html" ${posePage ? 'aria-current="page"' : ""}>三维位姿</a>
         <a href="/impact.html" ${impactPage ? 'aria-current="page"' : ""}>落点分析</a>
       </nav>
       <div class="top-actions"><div id="serviceStatus" class="status" data-kind="loading" role="status">正在连接</div><button class="text-button" id="exitApp">退出</button></div>
@@ -64,8 +70,8 @@
         <progress id="uploadProgress" class="upload-progress" hidden></progress>
         <div id="mediaList" class="media-list"></div>
       </aside>
-      <section class="main-view" aria-label="${impactPage ? "落点分析" : "检测预览"}">
-        <div class="view-heading"><div><h1>${impactPage ? "落点分析" : "检测预览"}</h1><div id="sourceHeading" class="source-heading">—</div></div><div class="view-heading-actions"><input id="detectionMode" type="hidden" value="fusion"><button id="calibrationButton">相机参数</button></div></div>
+      <section class="main-view" aria-label="${pageTitle}">
+        <div class="view-heading"><div><h1>${pageTitle}</h1><div id="sourceHeading" class="source-heading">—</div></div><div class="view-heading-actions"><input id="detectionMode" type="hidden" value="fusion"><button id="retryButton" disabled>重新检测</button><button id="calibrationButton">相机参数</button></div></div>
         <div class="player">
           <div id="stage" class="stage"><canvas id="preview" width="640" height="480" aria-label="检测画面"></canvas><div class="stage-empty" id="stageEmpty">选择素材</div></div>
           <div class="player-controls">
@@ -76,12 +82,16 @@
             <label class="checkbox-label"><input id="showBoxes" type="checkbox" checked>检测框</label>
             <label class="checkbox-label"><input id="showTraditional" type="checkbox" checked>传统框</label>
             <label class="checkbox-label"><input id="showLamps" type="checkbox" checked>灯条</label>
-            <label class="checkbox-label"><input id="showPrediction" type="checkbox" checked>预测 +0.150 s</label>
-            <label class="checkbox-label"><input id="showAxes" type="checkbox" checked>坐标轴</label>
+            <label class="checkbox-label"><input id="showPrediction" type="checkbox" checked><span id="predictionLabel">预测 +0.150 s</span></label>
+            <label class="checkbox-label"><input id="showHistory" type="checkbox" ${motionPage ? "checked" : ""}>历史轨迹</label>
+            <label class="checkbox-label"><input id="showFiltered" type="checkbox" ${motionPage ? "checked" : ""}>平滑中心</label>
+            <label class="checkbox-label"><input id="showAxes" type="checkbox" ${posePage ? "checked" : ""}>坐标轴</label>
+            ${motionPage ? '<label class="horizon-control" for="horizonMs">预测提前量 · ms<input id="horizonMs" type="number" min="0" max="300" step="10" value="150"></label>' : ''}
           </div>
         </div>
         <div class="metrics" aria-live="off"><div class="metric"><span class="metric-label">目标</span><span class="metric-value" id="metricTargets">—</span></div><div class="metric"><span class="metric-label">处理耗时</span><span class="metric-value" id="metricLatency">—</span><span class="metric-label">ms</span></div><div class="metric"><span class="metric-label">检测频率</span><span class="metric-value" id="metricRate">—</span><span class="metric-label">Hz</span></div><div class="metric"><span class="metric-label">画面时间</span><span class="metric-value" id="metricTime">—</span><span class="metric-label">s</span></div></div>
         <div id="notice" class="notice" role="status"></div>
+        ${posePage ? '<section class="pose-view"><div class="section-heading"><h2>三维视图</h2><span id="poseViewState" class="target-state">等待灯条</span></div><div class="pose-controls"><label for="poseView">视角<select id="poseView"><option value="detail">目标近景</option><option value="scene">相机全景</option></select></label><label for="poseYaw">水平<input id="poseYaw" type="range" min="-180" max="180" value="20"></label><label for="posePitch">垂直<input id="posePitch" type="range" min="-80" max="80" value="-15"></label><button id="resetPoseView">复位视角</button></div><canvas id="poseCanvas" width="640" height="480" aria-label="相机坐标系装甲板三维位姿"></canvas></section>' : ''}
       </section>
       <aside class="inspector" aria-label="目标状态">
         <div class="section-heading"><h2>目标状态</h2><span id="targetCount" class="count">0</span></div>
@@ -94,7 +104,9 @@
             <div class="measurement"><dt>估算 XYZ · m</dt><dd id="detailXYZ">—</dd></div>
             <div class="measurement"><dt>估算距离 · m</dt><dd id="detailRange">—</dd></div>
             <div class="measurement"><dt>旋转向量 · rad</dt><dd id="detailRotation">—</dd></div>
-            <div class="measurement"><dt>预测 +0.150 s</dt><dd id="detailPrediction">—</dd></div>
+            <div class="measurement"><dt id="detailHorizon">预测 +0.150 s</dt><dd id="detailPrediction">—</dd></div>
+            ${motionPage ? '<div class="measurement"><dt>预测状态</dt><dd id="detailPredictionState">—</dd></div><div class="measurement"><dt>观测 / 预测 · s</dt><dd id="detailPredictionTime">—</dd></div><div class="measurement"><dt>样本 / 时长</dt><dd id="detailSamples">—</dd></div><div class="measurement"><dt>加速度 · px/s²</dt><dd id="detailAcceleration">—</dd></div><div class="measurement"><dt>不确定半径 · px</dt><dd id="detailUncertainty">—</dd></div>' : ''}
+            ${posePage ? '<div class="measurement"><dt>位姿状态</dt><dd id="detailPoseState">—</dd></div><div class="measurement"><dt>三维速度 · m/s</dt><dd id="detailPoseVelocity">—</dd></div><div class="measurement"><dt>重投影误差 · px</dt><dd id="detailReprojection">—</dd></div>' : ''}
           </dl>
         </section>
         ${impactPage ? `<section class="impact-controls"><div class="section-heading"><h2>落点</h2><span class="target-state" id="impactStatus">等待完整灯条</span></div><div class="control-row"><button class="primary" id="pointButton" disabled>选取落点</button><button id="clearPointButton" disabled>清除</button></div><div id="impactResult" class="impact-result" hidden><div id="impactState" class="impact-state">—</div><dl class="measurements"><div class="measurement"><dt>落点 · px</dt><dd id="impactPoint">—</dd></div><div class="measurement"><dt>目标 · px</dt><dd id="impactTarget">—</dd></div><div class="measurement"><dt>水平修正</dt><dd id="impactDX">—</dd></div><div class="measurement"><dt>垂直修正</dt><dd id="impactDY">—</dd></div><div class="measurement"><dt>边缘距离 · px</dt><dd id="impactEdge">—</dd></div></dl></div></section>` : ""}
@@ -125,20 +137,25 @@
   const palette = {};
   const css = getComputedStyle(document.documentElement);
   ["lamp-red", "lamp-blue", "prediction", "geometry", "stage", "stage-text", "neutral-400"].forEach(key => { palette[key] = css.getPropertyValue(`--color-${key}`).trim(); });
-  window.debugState = () => ({epoch: state.epoch, pending: state.busy, sequence: state.sequence, latestTimestamp: state.presentedAt, sourceTimestamp: sourceTimestamp(), sourceId: state.item?.id ?? null, resultTimestamp: state.result?.timestamp ?? null, sourceType: state.source, selectedIndex: state.selectedIndex, ready: state.ready, preparedMode: state.preparedMode, preparingMode: state.preparingMode, requestHistory: state.requestHistory.slice(-20)});
+  window.debugState = () => ({epoch: state.epoch, pending: state.busy, sequence: state.sequence, latestTimestamp: state.presentedAt, sourceTimestamp: sourceTimestamp(), sourceId: state.item?.id ?? null, resultTimestamp: state.result?.timestamp ?? null, sourceType: state.source, selectedIndex: state.selectedIndex, ready: state.ready, preparedMode: state.preparedMode, preparingMode: state.preparingMode, failed: state.failed, horizon: state.horizon, requestHistory: state.requestHistory.slice(-20)});
 
   function notice(message = "") { $("notice").textContent = message; }
   function status(text, kind = "loading") { $("serviceStatus").textContent = text; $("serviceStatus").dataset.kind = kind; }
-  async function request(url, options = {}) {
-    const response = await fetch(url, options);
-    if (!response.ok) {
-      let message = `请求失败 · ${response.status}`;
-      try { const body = await response.json(); message = body.error?.message || body.detail || body.error || message; } catch (_) { /* Keep the HTTP status. */ }
-      const error = new Error(typeof message === "string" ? message : JSON.stringify(message));
-      error.status = response.status;
-      throw error;
-    }
-    return response.json();
+  async function request(url, options = {}, timeoutMs = 0) {
+    const controller = !options.signal && timeoutMs > 0 && typeof AbortController === "function" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await fetch(url, controller ? {...options, signal: controller.signal} : options);
+      if (!response.ok) {
+        let message = `请求失败 · ${response.status}`;
+        try { const body = await response.json(); message = body.error?.message || body.detail || body.error || message; } catch (_) { /* Keep the HTTP status. */ }
+        const error = new Error(typeof message === "string" ? message : JSON.stringify(message));
+        error.status = response.status;
+        throw error;
+      }
+      return await response.json();
+    } catch (error) { if (controller?.signal.aborted) throw new Error("请求超时，请重试"); throw error; }
+    finally { if (timer != null) clearTimeout(timer); }
   }
   let preparationTask = null;
   let rawFramesSupported = true;
@@ -162,7 +179,7 @@
         const mode = $("detectionMode").value;
         state.preparingMode = mode;
         try {
-          await request(`/api/warmup?mode=${encodeURIComponent(mode)}`, {method: "POST"});
+          await request(`/api/warmup?mode=${encodeURIComponent(mode)}`, {method: "POST"}, 35000);
         } catch (error) {
           if (mode !== $("detectionMode").value) continue;
           status("连接失败", "error"); notice(error.message);
@@ -179,6 +196,7 @@
     return preparationTask;
   }
   function resetEpoch(clear = true) {
+    state.analysisController?.abort();
     state.epoch++;
     state.wantsFrame = false;
     state.lastCaptureTime = null;
@@ -186,6 +204,7 @@
     state.impactPoint = null;
     state.impactResult = null;
     state.pointMode = false;
+    state.failed = false;
     $("stage").dataset.pointMode = "false";
     if (clear) { state.result = null; state.snapshot = null; state.presentedAt = null; state.selectedIndex = -1; state.selectedTrack = null; clearCanvas(); renderTargets(); }
     renderImpact();
@@ -255,6 +274,7 @@
     $("timeline").max = isVideo && finite(video.duration) ? video.duration : 1;
     if (!state.scrubbing) $("timeline").value = isVideo ? video.currentTime : 0;
     $("timeDisplay").textContent = isCamera ? `${clock(sourceTimestamp())} / 实时` : isVideo ? `${clock(video.currentTime)} / ${clock(video.duration)}` : "图片";
+    $("retryButton").disabled = state.busy || !state.source;
   }
   function showLoadedFrame() {
     const source = state.source === "image" ? sourceImage : video;
@@ -297,7 +317,7 @@
     return pngFramePayload();
   }
   async function analyzeFrame() {
-    if (state.busy || !state.ready || !state.source || state.scrubbing) return;
+    if (state.busy || !state.ready || !state.source || state.scrubbing || state.failed) return;
     const isImage = state.source === "image";
     if (isImage && (!state.imageReady || !sourceImage.complete)) return;
     const width = isImage ? sourceImage.naturalWidth : video.videoWidth;
@@ -312,6 +332,7 @@
     const epoch = state.epoch;
     const sequence = ++state.sequence;
     const mode = $("detectionMode").value;
+    const horizon = state.horizon;
     const sourceId = state.item?.id ?? null;
     const started = performance.now();
     let captureMs = 0, payloadMs = 0, requestMs = 0;
@@ -330,12 +351,16 @@
         if (state.calibration) headers["X-Calibration"] = encodeURIComponent(JSON.stringify(state.calibration));
         return headers;
       };
-      const query = new URLSearchParams({session: state.session, epoch: String(epoch), sequence: String(sequence), timestamp: timestamp.toFixed(6), horizon: String(HORIZON), mode});
+      const query = new URLSearchParams({session: state.session, epoch: String(epoch), sequence: String(sequence), timestamp: timestamp.toFixed(6), horizon: String(horizon), mode});
       state.lastRequest = {epoch, sequence, timestamp};
       const sendPayload = async value => {
         const requestStarted = performance.now();
-        try { return await request(`/api/analyze?${query}`, {method: "POST", headers: headersFor(value), body: value.body}); }
-        finally { requestMs += performance.now() - requestStarted; }
+        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        state.analysisController = controller;
+        const timer = controller ? setTimeout(() => controller.abort(), 10000) : null;
+        try { return await request(`/api/analyze?${query}`, {method: "POST", headers: headersFor(value), body: value.body, ...(controller ? {signal: controller.signal} : {})}); }
+        catch (error) { if (controller?.signal.aborted && epoch === state.epoch) throw new Error("检测超时，请重新检测"); throw error; }
+        finally { if (timer != null) clearTimeout(timer); if (state.analysisController === controller) state.analysisController = null; requestMs += performance.now() - requestStarted; }
       };
       let result;
       try {
@@ -354,6 +379,7 @@
       state.requestHistory.push(record);
       if (state.requestHistory.length > 40) state.requestHistory.shift();
       if (epoch !== state.epoch || mode !== $("detectionMode").value) return;
+      if (horizon !== state.horizon) { askFrame(); return; }
       if (finite(result.timestamp) && Math.abs(result.timestamp - timestamp) > 0.000002) throw new Error("画面时间校验失败");
       const renderStarted = performance.now();
       state.snapshot = snapshot;
@@ -384,7 +410,10 @@
       $("metricRate").textContent = num(rate, 1);
       $("metricLatency").textContent = num(record.end_to_end_ms, 1);
     } catch (error) {
-      if (epoch === state.epoch) notice(error.message || "检测失败");
+      if (epoch === state.epoch) {
+        state.failed = true; state.lastCaptureTime = null; state.wantsFrame = false;
+        video.pause(); notice(error.message || "检测失败，请重新检测");
+      }
     } finally {
       state.busy = false; $("stage").dataset.pending = "false";
       analysisIdleWaiters.splice(0).forEach(resolve => resolve());
@@ -404,6 +433,10 @@
   }
   function idFor(obs, index) { const track = trackFor(obs, index); return track?.track_id ?? track?.id ?? obs.track_id ?? null; }
   function futureFor(id) { return id == null ? null : (state.result?.future_prediction?.tracks || []).find(track => (track.track_id ?? track.id) === id); }
+  function selectedTrackState() { return tracks().find(track => (track.track_id ?? track.id) === state.selectedTrack) ?? null; }
+  function motionFor(id) { return (state.result?.motion_estimates || []).find(track => track.track_id === id); }
+  const predictionReasons = {tentative: "目标待确认", insufficient_measurements: "连续观测不足", unsupported_displacement: "提前量过大", uncertain: "预测不确定", outside_image: "预测超出画面", prediction_expired: "观测已过期", clock_mismatch: "时间不匹配"};
+  const poseReasons = {estimated: "已解算", ambiguous: "朝向待确认", pose_temporal_waiting: "三维重建中", calibration_required: "等待相机参数", resolution_mismatch: "参数分辨率不符", lamp_corners_required: "等待完整灯条", incomplete_lamp_extent: "灯条不完整", reprojection_rejected: "角点误差过大", invalid_corners: "角点无效", invalid_corner_order: "角点顺序无效", corners_outside_image: "角点超出画面", solver_failed: "解算失败"};
   function selectedObservation() { return state.result?.observations?.[state.selectedIndex] ?? null; }
   function guarded(obs) { return obs?.pose_geometry_guard?.status === "rejected" || obs?.pose_geometry_guard === "rejected" || obs?.pose_geometry_guard?.rejected === true; }
   function poseFor(obs, index) {
@@ -417,17 +450,25 @@
       const retained = observations.findIndex((obs, index) => idFor(obs, index) === state.selectedTrack);
       state.selectedIndex = retained;
     }
-    if (state.selectedIndex < 0 || state.selectedIndex >= observations.length) state.selectedIndex = observations.length ? 0 : -1;
-    state.selectedTrack = state.selectedIndex >= 0 ? idFor(observations[state.selectedIndex], state.selectedIndex) : null;
-    $("targetCount").textContent = observations.length;
+    const coasting = tracks().filter(track => !track.observed);
+    if ((state.selectedIndex < 0 || state.selectedIndex >= observations.length) && !selectedTrackState()) state.selectedIndex = observations.length ? 0 : -1;
+    state.selectedTrack = state.selectedIndex >= 0 ? idFor(observations[state.selectedIndex], state.selectedIndex) : selectedTrackState()?.track_id ?? coasting[0]?.track_id ?? null;
+    $("targetCount").textContent = observations.length + coasting.length;
     $("targetRows").innerHTML = observations.length ? observations.map((obs, index) => {
       const id = idFor(obs, index);
       const center = trackFor(obs, index)?.center ?? obs.center;
       const color = obs.color === "red" || obs.color === "blue" ? obs.color : "";
       return `<tr class="target-row" tabindex="0" data-index="${index}" aria-selected="${index === state.selectedIndex}"><td><span class="target-color ${color}"></span>${id == null ? "—" : escape(id)}</td><td>${finite(obs.score) ? `${num(obs.score * 100, 1)}%` : "—"}</td><td>${xy(center)}</td></tr>`;
-    }).join("") : '<tr class="empty-row"><td colspan="3">暂无目标</td></tr>';
+    }).join("") : "";
+    $("targetRows").innerHTML += coasting.map(track => `<tr class="target-row" tabindex="0" data-coasting-id="${escape(track.track_id)}" aria-selected="${state.selectedTrack === track.track_id}"><td>${escape(track.track_id)}</td><td>短时外推</td><td>${xy(track.center)}</td></tr>`).join("");
+    if (!observations.length && !coasting.length) $("targetRows").innerHTML = '<tr class="empty-row"><td colspan="3">暂无目标</td></tr>';
     $("targetRows").querySelectorAll("[data-index]").forEach(row => {
       const select = () => { state.selectedIndex = Number(row.dataset.index); state.selectedTrack = idFor(observations[state.selectedIndex], state.selectedIndex); state.impactResult = null; state.impactPoint = null; renderTargets(); drawFrame(); };
+      row.addEventListener("click", select);
+      row.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
+    });
+    $("targetRows").querySelectorAll("[data-coasting-id]").forEach(row => {
+      const select = () => { state.selectedIndex = -1; state.selectedTrack = coasting.find(track => String(track.track_id) === row.dataset.coastingId)?.track_id ?? null; renderTargets(); drawFrame(); };
       row.addEventListener("click", select);
       row.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
     });
@@ -435,23 +476,95 @@
   }
   function renderDetail() {
     const obs = selectedObservation();
-    $("targetDetail").hidden = !obs;
-    if (!obs) return;
-    const track = trackFor(obs, state.selectedIndex);
-    const id = idFor(obs, state.selectedIndex);
+    const track = obs ? trackFor(obs, state.selectedIndex) : selectedTrackState();
+    $("targetDetail").hidden = !obs && !track;
+    if (!obs && !track) { if (posePage) drawPoseView(); return; }
+    const id = track?.track_id ?? (obs ? idFor(obs, state.selectedIndex) : null);
     const pose = poseFor(obs, state.selectedIndex);
     const prediction = futureFor(id);
     $("selectedTitle").textContent = id == null ? "目标" : `目标 ${id}`;
-    $("selectedState").textContent = track ? (track.confirmed === false || track.state === "tentative" ? "待确认" : "跟踪中") : "已检测";
-    $("detailPosition").textContent = xy(track?.center ?? obs.center);
+    $("selectedState").textContent = track ? (!track.observed ? "短时外推" : track.confirmed === false || track.status === "tentative" ? "待确认" : "跟踪中") : "已检测";
+    $("detailPosition").textContent = xy(track?.center ?? obs?.center);
     $("detailVelocity").textContent = xy(track?.velocity);
     $("detailXYZ").textContent = pose ? pose.tvec_m.map(value => num(value, 3)).join(", ") : "—";
     $("detailRange").textContent = pose ? num(pose.range_m, 3) : "—";
     const rotation = pose?.orientation_readout ? pose.orientation_readout.rvec_for_display : pose?.orientation_status === "waiting" ? null : pose?.rvec_rad;
     $("detailRotation").textContent = Array.isArray(rotation) && rotation.every(finite) ? rotation.map(value => num(value, 3)).join(", ") : "—";
     $("detailPrediction").textContent = prediction?.status === "ready" && pair(prediction.center) ? xy(prediction.center) : "等待";
+    if (motionPage) {
+      const estimate = motionFor(id);
+      $("detailPredictionState").textContent = prediction?.status === "ready" ? "可用" : predictionReasons[prediction?.reason] || "等待连续观测";
+      $("detailPredictionTime").textContent = prediction ? `${num(prediction.observation_timestamp, 3)} / ${num(prediction.target_timestamp, 3)}` : "—";
+      $("detailSamples").textContent = estimate ? `${estimate.samples} / ${num(estimate.measurement_span_s, 3)} s` : "—";
+      $("detailAcceleration").textContent = xy(estimate?.acceleration);
+      $("detailUncertainty").textContent = num(prediction?.uncertainty_radius_px);
+    }
+    if (posePage) {
+      const raw = track?.pose ?? obs?.pose;
+      $("detailPoseState").textContent = poseReasons[raw?.status] || "等待完整灯条";
+      $("detailPoseVelocity").textContent = raw?.velocity_m_s?.every(finite) ? raw.velocity_m_s.map(value => num(value, 3)).join(", ") : "—";
+      $("detailReprojection").textContent = num(raw?.reprojection_px, 3);
+      drawPoseView();
+    }
   }
   function strokeLine(a, b, color, width) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); }
+  function drawPrediction(center, prediction, unit) {
+    if (!$("showPrediction").checked || prediction?.status !== "ready" || !pair(prediction.center)) return;
+    const [x, y] = prediction.center;
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
+    if (pair(center)) { ctx.setLineDash([4 * unit, 4 * unit]); strokeLine(center, [x, y], palette.prediction, unit); ctx.setLineDash([]); }
+    strokeLine([x - 6 * unit, y], [x + 6 * unit, y], palette.prediction, 2 * unit);
+    strokeLine([x, y - 6 * unit], [x, y + 6 * unit], palette.prediction, 2 * unit);
+  }
+  function drawPoseView() {
+    if (!posePage) return;
+    const view = $("poseCanvas"), painter = view.getContext("2d");
+    const obs = selectedObservation(), pose = obs ? poseFor(obs, state.selectedIndex) : null;
+    painter.clearRect(0, 0, view.width, view.height);
+    painter.fillStyle = css.getPropertyValue("--color-neutral-50").trim(); painter.fillRect(0, 0, view.width, view.height);
+    painter.font = `400 14px "Segoe UI", "Microsoft YaHei", sans-serif`;
+    painter.fillStyle = css.getPropertyValue("--color-neutral-500").trim();
+    if (!pose || !Array.isArray(pose.corners_camera_m) || !pose.corners_camera_m.every(point => point.length === 3 && point.every(finite))) {
+      const status = poseReasons[(selectedTrackState()?.pose ?? obs?.pose)?.status] || "等待完整灯条";
+      $("poseViewState").textContent = status; painter.fillText(status, 24, 32); return;
+    }
+    const orientation = pose.orientation_readout;
+    const reliable = orientation ? Array.isArray(orientation.rvec_for_display) : !["waiting", "unavailable"].includes(pose.orientation_status);
+    $("poseViewState").textContent = reliable ? "已解算" : "位置已解算 · 朝向待确认";
+    const yaw = Number($("poseYaw").value) * Math.PI / 180, pitch = Number($("posePitch").value) * Math.PI / 180;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+    const detail = $("poseView").value === "detail";
+    const span = Math.max(...pose.lamp_reference_mm) / 1000;
+    const focus = detail ? pose.tvec_m : pose.tvec_m.map(value => value / 2);
+    const scale = Math.min(view.width, view.height) * .60 / (detail ? span : Math.max(pose.range_m, span));
+    const transform = point => {
+      const [x, y, z] = point.map((value, i) => value - focus[i]);
+      const horizontal = cy * x + sy * z, depth = -sy * x + cy * z;
+      return [view.width / 2 + horizontal * scale, view.height / 2 + (cp * y - sp * depth) * scale];
+    };
+    const line = (points, color, dashed = false) => {
+      painter.strokeStyle = color; painter.lineWidth = 2; painter.setLineDash(dashed ? [8, 4] : []);
+      painter.beginPath(); points.map(transform).forEach((point, i) => i ? painter.lineTo(...point) : painter.moveTo(...point)); painter.stroke(); painter.setLineDash([]);
+    };
+    const label = (point, text, color) => { const [x, y] = transform(point); painter.fillStyle = color; painter.fillText(text, x + 8, y - 8); };
+    const axisColors = [palette["lamp-red"], palette.geometry, palette["lamp-blue"]];
+    if (!detail) {
+      const origin = [0, 0, 0], length = Math.max(pose.range_m * .15, span);
+      axisColors.forEach((color, i) => { const end = origin.map((_, j) => i === j ? length : 0); line([origin, end], color); label(end, ["X 右", "Y 下", "Z 前"][i], color); });
+      line([origin, pose.tvec_m], palette["neutral-400"], true); label(origin, "相机", palette["neutral-400"]);
+    }
+    if (reliable) {
+      const points = pose.corners_camera_m;
+      line([...points, points[0]], obs.color === "red" ? palette["lamp-red"] : palette["lamp-blue"]);
+      if (Array.isArray(pose.axes_camera_m) && pose.axes_camera_m.length === 4) axisColors.forEach((color, i) => {
+        line([pose.axes_camera_m[0], pose.axes_camera_m[i + 1]], color); label(pose.axes_camera_m[i + 1], ["X", "Y", "Z"][i], color);
+      });
+    } else {
+      const point = transform(pose.tvec_m); painter.fillStyle = palette.geometry;
+      painter.beginPath(); painter.arc(...point, 4, 0, Math.PI * 2); painter.fill();
+    }
+    label(pose.tvec_m, `ID ${state.selectedTrack ?? "—"}`, palette.geometry);
+  }
   function drawFrame() {
     if (!state.snapshot) return;
     if (canvas.width !== state.snapshot.width || canvas.height !== state.snapshot.height) { canvas.width = state.snapshot.width; canvas.height = state.snapshot.height; }
@@ -460,6 +573,21 @@
     const unit = Math.max(1, canvas.width / 640);
     const labelSize = 14 * unit;
     ctx.font = `600 ${labelSize}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+    tracks().forEach(track => {
+      const color = track.color === "red" ? palette["lamp-red"] : palette["lamp-blue"];
+      if ($("showHistory").checked) {
+        const history = (track.history || []).filter(point => pair(point.center));
+        for (let i = 1; i < history.length; i++) {
+          if (!history[i].observed || !history[i - 1].observed) ctx.setLineDash([4 * unit, 4 * unit]);
+          strokeLine(history[i - 1].center, history[i].center, color, 1.5 * unit); ctx.setLineDash([]);
+        }
+      }
+      if ($("showFiltered").checked && pair(track.center)) {
+        ctx.strokeStyle = palette.geometry; ctx.lineWidth = 2 * unit;
+        ctx.beginPath(); ctx.arc(...track.center, 4 * unit, 0, Math.PI * 2); ctx.stroke();
+      }
+      if (!track.observed) drawPrediction(track.center, futureFor(track.track_id), unit);
+    });
     const observations = state.result?.observations || [];
     observations.forEach((obs, index) => {
       const color = obs.color === "red" ? palette["lamp-red"] : obs.color === "blue" ? palette["lamp-blue"] : palette["geometry"];
@@ -492,16 +620,7 @@
         strokeLine(axes[0], axes[2], palette.geometry, 2 * unit);
         strokeLine(axes[0], axes[3], palette["lamp-blue"], 2 * unit);
       }
-      const prediction = futureFor(idFor(obs, index));
-      if ($("showPrediction").checked && prediction?.status === "ready" && pair(prediction.center)) {
-        const [x, y] = prediction.center;
-        if (x >= 0 && y >= 0 && x < canvas.width && y < canvas.height) {
-          const center = trackFor(obs, index)?.center ?? obs.center;
-          if (pair(center)) { ctx.setLineDash([4 * unit, 4 * unit]); strokeLine(center, [x, y], palette.prediction, unit); ctx.setLineDash([]); }
-          strokeLine([x - 6 * unit, y], [x + 6 * unit, y], palette.prediction, 2 * unit);
-          strokeLine([x, y - 6 * unit], [x, y + 6 * unit], palette.prediction, 2 * unit);
-        }
-      }
+      drawPrediction(trackFor(obs, index)?.center ?? obs.center, futureFor(idFor(obs, index)), unit);
     });
     if ($("showTraditional").checked && state.result?.detection_mode !== "classical") {
       (state.result?.traditional_observations || []).forEach(obs => {
@@ -569,23 +688,42 @@
     const files = Array.from(event.target.files || []);
     if (!files.length) return;
     $("uploadButton").disabled = true; $("uploadProgress").hidden = false;
-    $("uploadProgress").max = files.length; $("uploadProgress").value = 0;
+    $("uploadProgress").max = files.length * 100; $("uploadProgress").value = 0;
     let lastItem = null;
     try {
-      for (const file of files) {
-        const data = await request(`/api/media?filename=${encodeURIComponent(file.name)}`, {method: "POST", headers: {"Content-Type": file.type || "application/octet-stream"}, body: file});
+      for (const [index, file] of files.entries()) {
+        let data = await request(`/api/media?filename=${encodeURIComponent(file.name)}&async=1`, {method: "POST", headers: {"Content-Type": file.type || "application/octet-stream"}, body: file}, 120000);
+        if (data.job) {
+          const id = data.job.id;
+          if (typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("素材导入状态无效");
+          let deadline = performance.now() + 30 * 60 * 1000;
+          while (data.job.status === "processing") {
+            $("uploadProgress").value = index * 100 + Math.max(0, Math.min(100, Number(data.job.progress) || 0));
+            if (performance.now() > deadline) throw new Error("素材导入超时，请重新上传");
+            await new Promise(resolve => setTimeout(resolve, 500));
+            data = await request(`/api/imports/${encodeURIComponent(id)}`, {}, 10000);
+          }
+          if (data.job.status !== "ready") throw new Error(data.job.error || "素材导入失败，请重新上传");
+          data = {item: data.job.item};
+        }
         if (!data.item) throw new Error("素材导入失败");
         state.media = [data.item, ...state.media.filter(item => item.id !== data.item.id)]; lastItem = data.item;
-        $("uploadProgress").value++; renderMedia();
+        $("uploadProgress").value = (index + 1) * 100; renderMedia();
       }
       notice();
     } catch (error) { notice(error.message); }
     finally { $("uploadButton").disabled = false; $("uploadProgress").hidden = true; event.target.value = ""; if (lastItem) await selectMedia(lastItem); }
   });
   $("cameraButton").addEventListener("click", () => void toggleCamera());
+  $("retryButton").addEventListener("click", async () => {
+    if (state.busy) return;
+    state.failed = false; state.lastCaptureTime = null; notice();
+    if (!state.ready) await prepareDetectionMode();
+    askFrame();
+  });
   $("playButton").addEventListener("click", async () => {
-    if (video.paused) { state.impactResult = null; state.impactPoint = null; state.pointMode = false; state.completions = []; renderImpact(); try { if (video.ended) { resetEpoch(); video.currentTime = 0; } await video.play(); } catch (error) { notice(error.message); } }
-    else { video.pause(); resetEpoch(false); askFrame(); }
+    if (video.paused) { state.failed = false; state.impactResult = null; state.impactPoint = null; state.pointMode = false; state.completions = []; renderImpact(); try { if (video.ended) { resetEpoch(); video.currentTime = 0; } await video.play(); } catch (error) { notice(error.message); } }
+    else { video.pause(); askFrame(); }
     updateControls();
   });
   function step(direction) {
@@ -620,7 +758,18 @@
     state.imageReady = true; showLoadedFrame(); askFrame(); updateControls();
   });
   sourceImage.addEventListener("error", () => { if (sourceImage.getAttribute("src")) notice("图片无法读取"); });
-  ["showBoxes", "showTraditional", "showLamps", "showPrediction", "showAxes"].forEach(id => $(id).addEventListener("change", drawFrame));
+  ["showBoxes", "showTraditional", "showLamps", "showPrediction", "showHistory", "showFiltered", "showAxes"].forEach(id => $(id).addEventListener("change", drawFrame));
+  if (motionPage) $("horizonMs").addEventListener("change", event => {
+    const value = Number(event.target.value);
+    if (!finite(value) || value < 0 || value > 300) { event.target.value = Math.round(state.horizon * 1000); return; }
+    state.horizon = value / 1000;
+    $("predictionLabel").textContent = $("detailHorizon").textContent = `预测 +${state.horizon.toFixed(3)} s`;
+    askFrame();
+  });
+  if (posePage) {
+    ["poseView", "poseYaw", "posePitch"].forEach(id => $(id).addEventListener("input", drawPoseView));
+    $("resetPoseView").addEventListener("click", () => { $("poseYaw").value = 20; $("posePitch").value = -15; drawPoseView(); });
+  }
   $("detectionMode").addEventListener("change", () => {
     resetEpoch(); showLoadedFrame();
     void prepareDetectionMode();
@@ -688,7 +837,7 @@
       } catch (error) { notice(error.message); }
     });
   }
-  window.addEventListener("beforeunload", () => { if (state.stream) state.stream.getTracks().forEach(track => track.stop()); });
+  window.addEventListener("beforeunload", () => { state.analysisController?.abort(); if (state.stream) state.stream.getTracks().forEach(track => track.stop()); });
   async function initialize() {
     frameLoop(); renderMedia(); calibrationDisplay();
     try {

@@ -11,8 +11,9 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs, unquote, quote
 
-from .engine import Engine, Busy, StaleFrame, impact_result
+from .engine import Engine, Busy, StaleFrame, InferenceTimeout, impact_result
 from .media import MediaLibrary
+from .version import VERSION, BUILD_ID
 
 
 class Application(ThreadingHTTPServer):
@@ -81,9 +82,10 @@ class Handler(BaseHTTPRequestHandler):
             self.local_request()
             path = unquote(urlsplit(self.path).path)
             if path == '/api/health':
-                self.json_response(dict(status='ready', app='astra-portable-vision', device='CPU', version='1.2.0',
+                self.json_response(dict(app='astra-portable-vision', device='CPU', version=VERSION, build_id=BUILD_ID,
                                         classical_module='fast_color_geometry_roi_v2',detection_modes=['fusion','classical'],
-                                        model_ready=self.server.engine.detector is not None and self.server.engine.detector.neural is not None))
+                                        cpu_scheduling=getattr(self.server, 'cpu_scheduling', {}),
+                                        **self.server.engine.health()))
             elif path == '/api/media':
                 self.json_response(self.server.media.listing())
             elif path.startswith('/media/'):
@@ -92,7 +94,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.file_response(self.server.media.thumbs.get(path.removeprefix('/thumb/').removesuffix('.jpg')))
             elif re.fullmatch(r'/exports/[a-f0-9]{32}\.png', path):
                 self.file_response(self.server.exports/path.split('/')[-1], attachment='ASTRA.png')
-            elif path in ('/', '/index.html', '/impact.html', '/styles.css', '/app.js'):
+            elif path.startswith('/api/imports/'):
+                job = self.server.media.import_status(path.removeprefix('/api/imports/'))
+                self.json_response({'job': job} if job else {'error': '导入任务不存在'}, 200 if job else 404)
+            elif path in ('/', '/index.html', '/impact.html', '/motion.html', '/pose.html', '/styles.css', '/app.js'):
                 self.file_response(self.server.root/'app/web'/('index.html' if path=='/' else path[1:]))
             else:
                 self.json_response({'error': '内容不存在'}, 404)
@@ -149,13 +154,19 @@ class Handler(BaseHTTPRequestHandler):
             self.json_response({'error': str(exc)}, 429)
         except StaleFrame as exc:
             self.json_response({'error': str(exc)}, 409)
+        except InferenceTimeout as exc:
+            self.json_response({'error': str(exc), 'code': 'inference_timeout'}, 504)
         except (ValueError, KeyError, TypeError, OverflowError) as exc:
             self.json_response({'error': str(exc)}, 400)
         except Exception as exc:
             import traceback
             with (self.server.data/'errors.log').open('a', encoding='utf-8') as log:
                 traceback.print_exc(file=log)
-            self.json_response({'error': '处理失败，请检查素材或重新启动程序'}, 500)
+            incident = uuid.uuid4().hex[:8]
+            with (self.server.data/'errors.log').open('a', encoding='utf-8') as log:
+                log.write(f'error_id={incident} path={self.path}\n')
+            self.json_response({'error': f'检测处理失败（记录 {incident}），可以重新检测',
+                                'error_id': incident, 'code': type(exc).__name__}, 500)
 
     def upload(self, filename):
         if not self.server.upload_lock.acquire(False):
@@ -174,8 +185,16 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('文件上传不完整')
                     target.write(chunk)
                     left -= len(chunk)
-            item = self.server.media.add_file(temporary, filename)
-            self.json_response({'item': item})
+            if parse_qs(urlsplit(self.path).query).get('async') == ['1']:
+                from .media import ImportBusy
+                try:
+                    job = self.server.media.begin_import(temporary, filename)
+                except ImportBusy as exc:
+                    raise Busy(str(exc)) from exc
+                self.json_response({'job': job}, 202)
+            else:
+                item = self.server.media.add_file(temporary, filename)
+                self.json_response({'item': item})
         finally:
             if temporary and Path(temporary).exists():
                 Path(temporary).unlink()
