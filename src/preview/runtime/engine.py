@@ -102,7 +102,7 @@ class Engine:
                 raise ValueError('会话编号无效')
             if not 0 <= epoch <= 1_000_000_000 or sequence < 0:
                 raise ValueError('帧编号无效')
-            if not math.isfinite(timestamp) or timestamp < 0 or not math.isfinite(horizon) or not 0 <= horizon <= .3:
+            if not math.isfinite(timestamp) or timestamp < 0 or not math.isfinite(horizon) or not 0 <= horizon <= .5:
                 raise ValueError('画面时间或预测时长无效')
             if not payload or len(payload) > 32*1024*1024:
                 raise ValueError('图像帧须在 32 MB 以内')
@@ -206,6 +206,21 @@ class Engine:
             return out
         finally:
             self.lock.release()
+
+    def prediction(self, session, epoch, timestamp=None, horizon=.15):
+        state = self.sessions.get(session)
+        if not state or state['epoch'] != epoch:
+            raise StaleFrame('没有当前跟踪段的预测状态')
+        response = state['response']
+        timestamp = response['timestamp'] if timestamp is None else float(timestamp)
+        if (not math.isfinite(timestamp) or not math.isfinite(horizon) or not 0 <= horizon <= .5
+                or not -1e-6 <= timestamp-response['timestamp'] <= .25+1e-6):
+            raise ValueError('预测时间无效或观测已过期')
+        result = forecast(response['motion_estimates'], timestamp+horizon, (response['width'], response['height']))
+        result.update(session=session, epoch=epoch, sequence=response['sequence'],
+                      state_timestamp=response['timestamp'], presentation_timestamp=timestamp,
+                      selected_horizon_s=horizon, coordinate_frame='image_pixels',position_unit='px')
+        return result
 
     def close(self):
         with self.lock:

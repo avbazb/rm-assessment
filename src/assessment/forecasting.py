@@ -16,7 +16,7 @@ class ForecastConfig:
     mode_time_s: float = .35
     min_samples: int = 5
     min_span_s: float = .10
-    max_horizon_s: float = .50
+    max_horizon_s: float = .80
     innovation_gate: float = 16.
 
 
@@ -132,7 +132,7 @@ def forecast(estimates,target_timestamp,image_size=None):
         dt=target_timestamp-e["state_timestamp"]
         reason=None
         if dt< -1e-6:reason="clock_mismatch"
-        elif dt>e["max_horizon_s"]:reason="prediction_expired"
+        elif dt>e["max_horizon_s"]+1e-6:reason="prediction_expired"
         elif not e["confirmed"]:reason="tentative"
         elif e["samples"]<e["min_samples"] or e["measurement_span_s"]+1e-9<e["min_span_s"]:reason="insufficient_measurements"
         base=dict(track_id=e["track_id"],segment=e["segment"],target_timestamp=target_timestamp,
@@ -155,8 +155,12 @@ def forecast(estimates,target_timestamp,image_size=None):
         if reason is None and displacement>limit:reason="unsupported_displacement"
         if reason is None and radius>max(4.,min(e["size"])/2):reason="uncertain"
         if reason is None and image_size and not (0<=x[0]<image_size[0] and 0<=x[1]<image_size[1]):reason="outside_image"
-        rows.append(dict(**base,status="waiting" if reason else "ready",reason=reason,
-            center=None if reason else x[:2].tolist(),candidate_center=x[:2].tolist(),
+        visible=reason is None or (reason in ("uncertain","unsupported_displacement")
+            and displacement<=max(3*limit,240*e["scale"]))
+        inside=image_size is None or (0<=x[0]<image_size[0] and 0<=x[1]<image_size[1])
+        visible=visible and inside
+        rows.append(dict(**base,status="ready" if reason is None else "estimated" if visible else "waiting",reason=reason,
+            usable=reason is None,center=x[:2].tolist() if visible else None,candidate_center=x[:2].tolist(),
             displacement_px=displacement,max_extrapolation_displacement_px=limit,
             velocity=x[2:4].tolist(),acceleration=x[4:].tolist(),position_covariance=p[:2,:2].tolist(),
             uncertainty_radius_px=radius,model_weights=[m["weight"] for m in e["models"]]))

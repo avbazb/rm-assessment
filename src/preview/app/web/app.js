@@ -5,6 +5,7 @@
   const impactPage = page === "impact";
   const motionPage = page === "motion";
   const posePage = page === "pose";
+  const predictionPage = motionPage || page === "detection";
   const pageTitle = {detection: "检测预览", motion: "运动预测", pose: "三维位姿", impact: "落点分析"}[page] || "检测预览";
   const $ = id => document.getElementById(id);
   const finite = value => typeof value === "number" && Number.isFinite(value);
@@ -44,11 +45,14 @@
     impactPoint: null, impactResult: null, cameraStart: null, lastCaptureTime: null, mediaFrame: null,
     processed: 0, startedAt: null, completions: [], lastRequest: null, requestHistory: [], timingHistory: [],
     ready: false, preparedMode: null, preparingMode: null, imageReady: false, exporting: false,
-    horizon: 0.15, analysisController: null, failed: false
+    horizon: 0.15, analysisController: null, failed: false,
+    view: null, displayCompletions: [], displayCount: 0, lastDisplayTime: null, lastDetailAt: 0
   };
   try {
     const saved = JSON.parse(localStorage.getItem("astra-calibration") || "null");
     if (saved && saved.value) { state.calibration = validateCalibrationInput(saved.value); state.calibrationName = saved.name || "已导入"; }
+    const savedHorizon = Number(localStorage.getItem("astra-prediction-horizon-ms") ?? 150);
+    if (finite(savedHorizon) && savedHorizon >= 0 && savedHorizon <= 500) state.horizon = savedHorizon / 1000;
   } catch (_) { /* An unavailable browser store does not block preview. */ }
 
   document.getElementById("app").innerHTML = `
@@ -83,13 +87,13 @@
             <label class="checkbox-label"><input id="showTraditional" type="checkbox" checked>传统框</label>
             <label class="checkbox-label"><input id="showLamps" type="checkbox" checked>灯条</label>
             <label class="checkbox-label"><input id="showPrediction" type="checkbox" checked><span id="predictionLabel">预测 +0.150 s</span></label>
-            <label class="checkbox-label"><input id="showHistory" type="checkbox" ${motionPage ? "checked" : ""}>历史轨迹</label>
-            <label class="checkbox-label"><input id="showFiltered" type="checkbox" ${motionPage ? "checked" : ""}>平滑中心</label>
+            <label class="checkbox-label"><input id="showHistory" type="checkbox" ${predictionPage ? "checked" : ""}>历史轨迹</label>
+            <label class="checkbox-label"><input id="showFiltered" type="checkbox" ${predictionPage ? "checked" : ""}>平滑中心</label>
             <label class="checkbox-label"><input id="showAxes" type="checkbox" ${posePage ? "checked" : ""}>坐标轴</label>
-            ${motionPage ? '<label class="horizon-control" for="horizonMs">预测提前量 · ms<input id="horizonMs" type="number" min="0" max="300" step="10" value="150"></label>' : ''}
+            ${predictionPage ? '<label class="horizon-control" for="horizonMs">预测提前量 · ms<input id="horizonMs" type="number" min="0" max="500" step="10" value="150"></label>' : ''}
           </div>
         </div>
-        <div class="metrics" aria-live="off"><div class="metric"><span class="metric-label">目标</span><span class="metric-value" id="metricTargets">—</span></div><div class="metric"><span class="metric-label">处理耗时</span><span class="metric-value" id="metricLatency">—</span><span class="metric-label">ms</span></div><div class="metric"><span class="metric-label">检测频率</span><span class="metric-value" id="metricRate">—</span><span class="metric-label">Hz</span></div><div class="metric"><span class="metric-label">画面时间</span><span class="metric-value" id="metricTime">—</span><span class="metric-label">s</span></div></div>
+        <div class="metrics" aria-live="off"><div class="metric"><span class="metric-label">目标</span><span class="metric-value" id="metricTargets">—</span></div><div class="metric"><span class="metric-label">处理耗时</span><span class="metric-value" id="metricLatency">—</span><span class="metric-label">ms</span></div><div class="metric"><span class="metric-label">检测频率</span><span class="metric-value" id="metricRate">—</span><span class="metric-label">Hz</span></div><div class="metric"><span class="metric-label">画面时间</span><span class="metric-value" id="metricTime">—</span><span class="metric-label">s</span></div><div class="metric"><span class="metric-label">播放帧率</span><span class="metric-value" id="metricPlayback">—</span><span class="metric-label">fps</span></div></div>
         <div id="notice" class="notice" role="status"></div>
         ${posePage ? '<section class="pose-view"><div class="section-heading"><h2>三维视图</h2><span id="poseViewState" class="target-state">等待灯条</span></div><div class="pose-controls"><label for="poseView">视角<select id="poseView"><option value="detail">目标近景</option><option value="scene">相机全景</option></select></label><label for="poseYaw">水平<input id="poseYaw" type="range" min="-180" max="180" value="20"></label><label for="posePitch">垂直<input id="posePitch" type="range" min="-80" max="80" value="-15"></label><button id="resetPoseView">复位视角</button></div><canvas id="poseCanvas" width="640" height="480" aria-label="相机坐标系装甲板三维位姿"></canvas></section>' : ''}
       </section>
@@ -105,7 +109,7 @@
             <div class="measurement"><dt>估算距离 · m</dt><dd id="detailRange">—</dd></div>
             <div class="measurement"><dt>旋转向量 · rad</dt><dd id="detailRotation">—</dd></div>
             <div class="measurement"><dt id="detailHorizon">预测 +0.150 s</dt><dd id="detailPrediction">—</dd></div>
-            ${motionPage ? '<div class="measurement"><dt>预测状态</dt><dd id="detailPredictionState">—</dd></div><div class="measurement"><dt>观测 / 预测 · s</dt><dd id="detailPredictionTime">—</dd></div><div class="measurement"><dt>样本 / 时长</dt><dd id="detailSamples">—</dd></div><div class="measurement"><dt>加速度 · px/s²</dt><dd id="detailAcceleration">—</dd></div><div class="measurement"><dt>不确定半径 · px</dt><dd id="detailUncertainty">—</dd></div>' : ''}
+            ${predictionPage ? '<div class="measurement"><dt>预测状态</dt><dd id="detailPredictionState">—</dd></div><div class="measurement"><dt>观测 / 预测 · s</dt><dd id="detailPredictionTime">—</dd></div><div class="measurement"><dt>样本 / 时长</dt><dd id="detailSamples">—</dd></div><div class="measurement"><dt>加速度 · px/s²</dt><dd id="detailAcceleration">—</dd></div><div class="measurement"><dt>不确定半径 · px</dt><dd id="detailUncertainty">—</dd></div>' : ''}
             ${posePage ? '<div class="measurement"><dt>位姿状态</dt><dd id="detailPoseState">—</dd></div><div class="measurement"><dt>三维速度 · m/s</dt><dd id="detailPoseVelocity">—</dd></div><div class="measurement"><dt>重投影误差 · px</dt><dd id="detailReprojection">—</dd></div>' : ''}
           </dl>
         </section>
@@ -117,11 +121,15 @@
     <img id="sourceImage" class="hidden-media" alt="">
   `;
   const video = $("sourceVideo");
+  if (predictionPage) $("horizonMs").value = Math.round(state.horizon * 1000);
+  $("predictionLabel").textContent = $("detailHorizon").textContent = `预测 +${state.horizon.toFixed(3)} s`;
   const sourceImage = $("sourceImage");
   const canvas = $("preview");
   const ctx = canvas.getContext("2d");
   const capture = document.createElement("canvas");
   const captureCtx = capture.getContext("2d", {willReadFrequently: true});
+  const decodedFrame = document.createElement("canvas");
+  const decodedContext = decodedFrame.getContext("2d");
   const snapshots = Array.from({length: 2}, () => {
     const frame = document.createElement("canvas");
     return {frame, context: frame.getContext("2d")};
@@ -129,7 +137,12 @@
   let nextSnapshot = 0;
   if (typeof video.requestVideoFrameCallback === "function") {
     const onVideoFrame = (_now, metadata) => {
-      if (!video.seeking) state.mediaFrame = {timestamp: metadata.mediaTime, epoch: state.epoch, sourceURL: video.currentSrc};
+      if (!video.seeking) {
+        resizeFrameCanvas(decodedFrame, video.videoWidth, video.videoHeight);
+        decodedContext.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+        state.mediaFrame = {timestamp: metadata.mediaTime, epoch: state.epoch, sourceURL: video.currentSrc, captured: true};
+        renderLiveFrame(state.source === "camera" ? sourceTimestamp() : metadata.mediaTime);
+      }
       video.requestVideoFrameCallback(onVideoFrame);
     };
     video.requestVideoFrameCallback(onVideoFrame);
@@ -137,7 +150,7 @@
   const palette = {};
   const css = getComputedStyle(document.documentElement);
   ["lamp-red", "lamp-blue", "prediction", "geometry", "stage", "stage-text", "neutral-400"].forEach(key => { palette[key] = css.getPropertyValue(`--color-${key}`).trim(); });
-  window.debugState = () => ({epoch: state.epoch, pending: state.busy, sequence: state.sequence, latestTimestamp: state.presentedAt, sourceTimestamp: sourceTimestamp(), sourceId: state.item?.id ?? null, resultTimestamp: state.result?.timestamp ?? null, sourceType: state.source, selectedIndex: state.selectedIndex, ready: state.ready, preparedMode: state.preparedMode, preparingMode: state.preparingMode, failed: state.failed, horizon: state.horizon, requestHistory: state.requestHistory.slice(-20)});
+  window.debugState = () => ({epoch: state.epoch, pending: state.busy, sequence: state.sequence, latestTimestamp: state.presentedAt, displayTimestamp: state.view?.timestamp ?? state.presentedAt, displayCount: state.displayCount, sourceTimestamp: sourceTimestamp(), sourceId: state.item?.id ?? null, resultTimestamp: state.result?.timestamp ?? null, sourceType: state.source, selectedIndex: state.selectedIndex, ready: state.ready, preparedMode: state.preparedMode, preparingMode: state.preparingMode, failed: state.failed, horizon: state.horizon, displayedPrediction: state.view?.future_prediction ?? state.result?.future_prediction, requestHistory: state.requestHistory.slice(-20)});
 
   function notice(message = "") { $("notice").textContent = message; }
   function status(text, kind = "loading") { $("serviceStatus").textContent = text; $("serviceStatus").dataset.kind = kind; }
@@ -205,6 +218,7 @@
     state.impactResult = null;
     state.pointMode = false;
     state.failed = false;
+    state.view = null; state.lastDisplayTime = null; state.displayCompletions = []; state.displayCount = 0;
     $("stage").dataset.pointMode = "false";
     if (clear) { state.result = null; state.snapshot = null; state.presentedAt = null; state.selectedIndex = -1; state.selectedTrack = null; clearCanvas(); renderTargets(); }
     renderImpact();
@@ -228,6 +242,7 @@
     $("metricLatency").textContent = "—";
     $("metricRate").textContent = "—";
     $("metricTime").textContent = "—";
+    $("metricPlayback").textContent = "—";
   }
   function renderMedia() {
     $("mediaCount").textContent = state.media.length;
@@ -260,6 +275,7 @@
     // mediaTime is decoded-frame PTS. The CFR map also covers seek completion before rVFC,
     // the final paused frame, and a compositor that stops callbacks for background tabs.
     const media = state.mediaFrame;
+    if (media?.captured && media.epoch === state.epoch && media.sourceURL === video.currentSrc && !video.seeking) return media.timestamp;
     if (media && media.epoch === state.epoch && media.sourceURL === video.currentSrc && finite(media.timestamp) && Math.abs(media.timestamp - cfrTimestamp) < 0.25 / fps) return media.timestamp;
     return cfrTimestamp;
   }
@@ -338,7 +354,9 @@
     let captureMs = 0, payloadMs = 0, requestMs = 0;
     try {
       resizeFrameCanvas(capture, width, height);
-      captureCtx.drawImage(isImage ? sourceImage : video, 0, 0, width, height);
+      const captured = !isImage && state.source === "video" && state.mediaFrame?.captured
+        && state.mediaFrame.epoch === epoch && state.mediaFrame.sourceURL === video.currentSrc;
+      captureCtx.drawImage(isImage ? sourceImage : captured ? decodedFrame : video, 0, 0, width, height);
       // Only the non-presented buffer may be written while a response is pending.
       const snapshot = snapshotForFrame(width, height);
       captureMs = performance.now() - started;
@@ -393,7 +411,10 @@
       $("metricTargets").textContent = (result.observations || []).length;
       $("exportButton").disabled = state.exporting;
       $("stageEmpty").hidden = true;
-      renderTargets(); drawFrame(); notice();
+      state.view = null;
+      renderTargets();
+      if (isPlaying()) renderLiveFrame(sourceTimestamp()); else drawFrame();
+      notice();
       const completedAt = performance.now();
       record.accepted = true;
       record.server_ms = finite(result.processing_ms) ? result.processing_ms : null;
@@ -427,12 +448,41 @@
     // The busy flag remains the only admission gate: this timer never queues captured frames.
     setTimeout(frameLoop, 40);
   }
-  function tracks() { return [...(state.result?.tracks || []), ...(state.result?.tentative_tracks || [])]; }
+  function isPlaying() { return (state.source === "video" || state.source === "camera") && !video.paused && !video.ended && !video.seeking && !state.scrubbing; }
+  function rawTracks() { return [...(state.result?.tracks || []), ...(state.result?.tentative_tracks || [])]; }
+  function renderLiveFrame(timestamp) {
+    if (!isPlaying() || !finite(timestamp) || !video.videoWidth) return;
+    const imageSize = [video.videoWidth, video.videoHeight];
+    const age = timestamp - (state.result?.timestamp ?? -Infinity);
+    const valid = age >= -0.000002 && age <= 0.25;
+    state.view = {timestamp,
+      tracks: valid ? rawTracks().map(track => AstraMotion.alignTrack(track, timestamp, imageSize)).filter(Boolean) : [],
+      future_prediction: valid ? AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize) : {tracks: []}};
+    drawFrame();
+    const now = performance.now();
+    if (state.lastDisplayTime !== timestamp) {
+      state.lastDisplayTime = timestamp; state.displayCount++;
+      state.displayCompletions = [...state.displayCompletions.filter(t => now - t < 2000), now];
+    }
+    canvas.dataset.displayCount = String(state.displayCount);
+    canvas.dataset.prediction = JSON.stringify({target_timestamp: timestamp + state.horizon,
+      tracks: state.view.future_prediction.tracks.map(p => ({track_id:p.track_id,status:p.status,center:p.center,usable:p.usable}))});
+    if (now - state.lastDetailAt >= 100) {
+      state.lastDetailAt = now; renderDetail(); $("metricTime").textContent = num(timestamp, 3);
+      const frames = state.displayCompletions;
+      if (frames.length > 1) $("metricPlayback").textContent = num((frames.length - 1) * 1000 / Math.max(1, frames.at(-1) - frames[0]), 1);
+    }
+  }
+  if (typeof video.requestVideoFrameCallback !== "function" && typeof requestAnimationFrame === "function") {
+    const displayLoop = () => { renderLiveFrame(sourceTimestamp()); requestAnimationFrame(displayLoop); };
+    requestAnimationFrame(displayLoop);
+  }
+  function tracks() { return state.view?.tracks ?? rawTracks(); }
   function trackFor(obs, index) {
     return tracks().find(track => track.observation_index === index) || (obs.track_id != null ? tracks().find(track => track.track_id === obs.track_id || track.id === obs.track_id) : null);
   }
   function idFor(obs, index) { const track = trackFor(obs, index); return track?.track_id ?? track?.id ?? obs.track_id ?? null; }
-  function futureFor(id) { return id == null ? null : (state.result?.future_prediction?.tracks || []).find(track => (track.track_id ?? track.id) === id); }
+  function futureFor(id) { return id == null ? null : ((state.view?.future_prediction ?? state.result?.future_prediction)?.tracks || []).find(track => (track.track_id ?? track.id) === id); }
   function selectedTrackState() { return tracks().find(track => (track.track_id ?? track.id) === state.selectedTrack) ?? null; }
   function motionFor(id) { return (state.result?.motion_estimates || []).find(track => track.track_id === id); }
   const predictionReasons = {tentative: "目标待确认", insufficient_measurements: "连续观测不足", unsupported_displacement: "提前量过大", uncertain: "预测不确定", outside_image: "预测超出画面", prediction_expired: "观测已过期", clock_mismatch: "时间不匹配"};
@@ -490,10 +540,10 @@
     $("detailRange").textContent = pose ? num(pose.range_m, 3) : "—";
     const rotation = pose?.orientation_readout ? pose.orientation_readout.rvec_for_display : pose?.orientation_status === "waiting" ? null : pose?.rvec_rad;
     $("detailRotation").textContent = Array.isArray(rotation) && rotation.every(finite) ? rotation.map(value => num(value, 3)).join(", ") : "—";
-    $("detailPrediction").textContent = prediction?.status === "ready" && pair(prediction.center) ? xy(prediction.center) : "等待";
-    if (motionPage) {
+    $("detailPrediction").textContent = pair(prediction?.center) ? xy(prediction.center) : "等待";
+    if (predictionPage) {
       const estimate = motionFor(id);
-      $("detailPredictionState").textContent = prediction?.status === "ready" ? "可用" : predictionReasons[prediction?.reason] || "等待连续观测";
+      $("detailPredictionState").textContent = prediction?.status === "ready" ? "可用" : prediction?.status === "estimated" ? `估计 · ${predictionReasons[prediction.reason] || "待确认"}` : predictionReasons[prediction?.reason] || "等待连续观测";
       $("detailPredictionTime").textContent = prediction ? `${num(prediction.observation_timestamp, 3)} / ${num(prediction.target_timestamp, 3)}` : "—";
       $("detailSamples").textContent = estimate ? `${estimate.samples} / ${num(estimate.measurement_span_s, 3)} s` : "—";
       $("detailAcceleration").textContent = xy(estimate?.acceleration);
@@ -509,12 +559,14 @@
   }
   function strokeLine(a, b, color, width) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); }
   function drawPrediction(center, prediction, unit) {
-    if (!$("showPrediction").checked || prediction?.status !== "ready" || !pair(prediction.center)) return;
+    if (!$("showPrediction").checked || !["ready", "estimated"].includes(prediction?.status) || !pair(prediction.center)) return;
     const [x, y] = prediction.center;
     if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return;
     if (pair(center)) { ctx.setLineDash([4 * unit, 4 * unit]); strokeLine(center, [x, y], palette.prediction, unit); ctx.setLineDash([]); }
     strokeLine([x - 6 * unit, y], [x + 6 * unit, y], palette.prediction, 2 * unit);
     strokeLine([x, y - 6 * unit], [x, y + 6 * unit], palette.prediction, 2 * unit);
+    ctx.fillStyle = palette.prediction;
+    ctx.fillText(`+${Math.round(state.horizon * 1000)} ms${prediction.status === "estimated" ? " 估计" : ""}`, Math.min(x + 8 * unit, canvas.width - 112 * unit), Math.max(16 * unit, y - 8 * unit));
   }
   function drawPoseView() {
     if (!posePage) return;
@@ -566,10 +618,15 @@
     label(pose.tvec_m, `ID ${state.selectedTrack ?? "—"}`, palette.geometry);
   }
   function drawFrame() {
-    if (!state.snapshot) return;
-    if (canvas.width !== state.snapshot.width || canvas.height !== state.snapshot.height) { canvas.width = state.snapshot.width; canvas.height = state.snapshot.height; }
+    const live = state.view && isPlaying();
+    const source = live ? video : state.snapshot;
+    if (!source) return;
+    const width = live ? video.videoWidth : source.width, height = live ? video.videoHeight : source.height;
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(state.snapshot, 0, 0);
+    ctx.drawImage(source, 0, 0, width, height);
+    if (live) { canvas.dataset.frameTimestamp = state.view.timestamp.toFixed(6); canvas.dataset.presentation = "media-clock-filtered-state"; $("stageEmpty").hidden = true; }
+    else { state.view = null; canvas.dataset.frameTimestamp = num(state.presentedAt, 6); canvas.dataset.presentation = "measured-frame"; }
     const unit = Math.max(1, canvas.width / 640);
     const labelSize = 14 * unit;
     ctx.font = `600 ${labelSize}px "Segoe UI", "Microsoft YaHei", sans-serif`;
@@ -588,8 +645,16 @@
       }
       if (!track.observed) drawPrediction(track.center, futureFor(track.track_id), unit);
     });
-    const observations = state.result?.observations || [];
-    observations.forEach((obs, index) => {
+    const observations = (state.result?.observations || []).map((obs, index) => {
+      if (!live) return obs;
+      const track = trackFor(obs, index);
+      if (!track) return null;
+      const dx = track.center[0] - obs.center[0], dy = track.center[1] - obs.center[1];
+      return {...obs, bbox: obs.bbox.map((v, i) => v + (i % 2 ? dy : dx)), center: track.center,
+        geometry_valid: false, corners: null, display_track: track, display_index: index};
+    }).filter(Boolean);
+    observations.forEach((obs, displayIndex) => {
+      const index = obs.display_index ?? displayIndex;
       const color = obs.color === "red" ? palette["lamp-red"] : obs.color === "blue" ? palette["lamp-blue"] : palette["geometry"];
       const selected = index === state.selectedIndex;
       if ($("showBoxes").checked && Array.isArray(obs.bbox) && obs.bbox.length === 4 && obs.bbox.every(finite)) {
@@ -597,7 +662,7 @@
         ctx.strokeStyle = color; ctx.lineWidth = (selected ? 2.5 : 1.5) * unit;
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
         const id = idFor(obs, index);
-        const label = `${obs.source === "classical" ? "传统 " : ""}${id != null ? `#${id}  ` : ""}${finite(obs.score) ? `${num(obs.score * 100, 1)}%` : ""}`;
+        const label = `${live ? "跟踪 " : obs.source === "classical" ? "传统 " : ""}${id != null ? `#${id}  ` : ""}${finite(obs.score) ? `${num(obs.score * 100, 1)}%` : ""}`;
         if (label) {
           const padding = 4 * unit, textWidth = ctx.measureText(label).width;
           const top = Math.max(0, y1 - labelSize - padding * 2), left = Math.min(Math.max(0, x1), Math.max(0, canvas.width - textWidth - padding * 2));
@@ -615,14 +680,14 @@
       const orientation = pose?.orientation_readout;
       const axes = orientation ? orientation.axes_for_display : pose?.axes_image_px;
       const orientationValid = orientation ? Array.isArray(orientation.axes_for_display) : pose?.orientation_status != null && !["waiting", "unavailable"].includes(pose.orientation_status);
-      if ($("showAxes").checked && orientationValid && Array.isArray(axes) && axes.length === 4 && axes.every(pair)) {
+      if (!live && $("showAxes").checked && orientationValid && Array.isArray(axes) && axes.length === 4 && axes.every(pair)) {
         strokeLine(axes[0], axes[1], palette["lamp-red"], 2 * unit);
         strokeLine(axes[0], axes[2], palette.geometry, 2 * unit);
         strokeLine(axes[0], axes[3], palette["lamp-blue"], 2 * unit);
       }
       drawPrediction(trackFor(obs, index)?.center ?? obs.center, futureFor(idFor(obs, index)), unit);
     });
-    if ($("showTraditional").checked && state.result?.detection_mode !== "classical") {
+    if (!live && $("showTraditional").checked && state.result?.detection_mode !== "classical") {
       (state.result?.traditional_observations || []).forEach(obs => {
         if (!Array.isArray(obs.bbox) || obs.bbox.length !== 4 || !obs.bbox.every(finite)) return;
         const [x1,y1,x2,y2] = obs.bbox;
@@ -723,7 +788,7 @@
   });
   $("playButton").addEventListener("click", async () => {
     if (video.paused) { state.failed = false; state.impactResult = null; state.impactPoint = null; state.pointMode = false; state.completions = []; renderImpact(); try { if (video.ended) { resetEpoch(); video.currentTime = 0; } await video.play(); } catch (error) { notice(error.message); } }
-    else { video.pause(); askFrame(); }
+    else { video.pause(); state.view = null; showLoadedFrame(); askFrame(); }
     updateControls();
   });
   function step(direction) {
@@ -759,13 +824,16 @@
   });
   sourceImage.addEventListener("error", () => { if (sourceImage.getAttribute("src")) notice("图片无法读取"); });
   ["showBoxes", "showTraditional", "showLamps", "showPrediction", "showHistory", "showFiltered", "showAxes"].forEach(id => $(id).addEventListener("change", drawFrame));
-  if (motionPage) $("horizonMs").addEventListener("change", event => {
+  function selectHorizon(event) {
+    if (event.target.value.trim() === "") return;
     const value = Number(event.target.value);
-    if (!finite(value) || value < 0 || value > 300) { event.target.value = Math.round(state.horizon * 1000); return; }
+    if (!finite(value) || value < 0 || value > 500) { event.target.value = Math.round(state.horizon * 1000); return; }
     state.horizon = value / 1000;
+    try { localStorage.setItem("astra-prediction-horizon-ms", String(value)); } catch (_) { /* Keep the current selection when storage is unavailable. */ }
     $("predictionLabel").textContent = $("detailHorizon").textContent = `预测 +${state.horizon.toFixed(3)} s`;
     askFrame();
-  });
+  }
+  if (predictionPage) ["input", "change"].forEach(name => $("horizonMs").addEventListener(name, selectHorizon));
   if (posePage) {
     ["poseView", "poseYaw", "posePitch"].forEach(id => $(id).addEventListener("input", drawPoseView));
     $("resetPoseView").addEventListener("click", () => { $("poseYaw").value = 20; $("posePitch").value = -15; drawPoseView(); });

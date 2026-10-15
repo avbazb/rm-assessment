@@ -88,6 +88,11 @@ class Handler(BaseHTTPRequestHandler):
                                         **self.server.engine.health()))
             elif path == '/api/media':
                 self.json_response(self.server.media.listing())
+            elif path == '/api/prediction':
+                query = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                timestamp = float(query['timestamp']) if 'timestamp' in query else None
+                self.json_response(self.server.engine.prediction(query.get('session','preview'),
+                    int(query.get('epoch',0)), timestamp, float(query.get('horizon',.15))))
             elif path.startswith('/media/'):
                 self.file_response(self.server.media.files.get(path.removeprefix('/media/')))
             elif path.startswith('/thumb/'):
@@ -97,12 +102,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith('/api/imports/'):
                 job = self.server.media.import_status(path.removeprefix('/api/imports/'))
                 self.json_response({'job': job} if job else {'error': '导入任务不存在'}, 200 if job else 404)
-            elif path in ('/', '/index.html', '/impact.html', '/motion.html', '/pose.html', '/styles.css', '/app.js'):
+            elif path in ('/', '/index.html', '/impact.html', '/motion.html', '/pose.html', '/styles.css', '/motion.js', '/app.js'):
                 self.file_response(self.server.root/'app/web'/('index.html' if path=='/' else path[1:]))
             else:
                 self.json_response({'error': '内容不存在'}, 404)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except StaleFrame as exc:
+            self.json_response({'error': str(exc)}, 409)
         except ValueError as exc:
             self.json_response({'error': str(exc)}, 400)
 
