@@ -1,4 +1,5 @@
 # ROS 2 仿真考核
+一键启动 launch 文件位置：[src/ros2_simulation/src/rmuc26_assessment/launch/assessment.launch.py](src/rmuc26_assessment/launch/assessment.launch.py)。
 
 RMUC26 地图、三台独立差速小车、Gazebo Classic 11 和 RViz2 共用一个 launch。三车初始位置分别为 `(4,-0.7)`、`(5,0.4)`、`(4,1.5)` 米。
 
