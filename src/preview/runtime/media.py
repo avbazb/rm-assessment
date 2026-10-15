@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import uuid
+from fractions import Fraction
 
 import cv2
 import numpy as np
@@ -155,7 +156,44 @@ class MediaLibrary:
             with self.jobs_lock:
                 self.import_jobs[job_id].update(values, updated_at=time.time())
 
-    def begin_import(self, temporary, filename):
+    @staticmethod
+    def _source_hash(temporary, source_sha256):
+        if source_sha256 is not None:
+            return source_sha256
+        with Path(temporary).open('rb') as source:
+            return hashlib.file_digest(source, 'sha256').hexdigest()
+
+    def _reuse_original(self, temporary, digest):
+        """Reuse verified content, never a filename or modification-time guess."""
+        size = Path(temporary).stat().st_size
+        with self.lock:
+            candidates = [(key, dict(item), self.files[key]) for key, item in self.entries.items()
+                          if item.get('origin') == 'upload']
+        for key, item, media in candidates:
+            if not media.is_file() or not self.thumbs[key].is_file():
+                continue
+            known = item.get('original_sha256')
+            if known is None:
+                # Upgrade old libraries lazily; do not scan every video at startup.
+                originals = list(media.parent.glob('original.*'))
+                if len(originals) != 1 or originals[0].stat().st_size != size:
+                    continue
+                with originals[0].open('rb') as source:
+                    known = hashlib.file_digest(source, 'sha256').hexdigest()
+                manifest = media.parent/'item.json'
+                row = json.loads(manifest.read_text('utf-8'))
+                row.update(original_sha256=known, original_bytes=size)
+                pending = media.parent/'item.json.tmp'
+                pending.write_text(json.dumps(row, ensure_ascii=False, indent=2), encoding='utf-8')
+                pending.replace(manifest)
+                with self.lock:
+                    self.entries[key].update(original_sha256=known, original_bytes=size)
+                    item = dict(self.entries[key])
+            if known == digest and item.get('original_bytes') == size:
+                return {**item, 'import_reused': True}
+        return None
+
+    def begin_import(self, temporary, filename, source_sha256=None):
         if not self.import_lock.acquire(False):
             raise ImportBusy('正在导入素材，请稍后重试')
         prepared = None
@@ -163,6 +201,16 @@ class MediaLibrary:
             with self.jobs_lock:
                 if self.closed:
                     raise ValueError('程序已关闭')
+            digest = self._source_hash(temporary, source_sha256)
+            reused = self._reuse_original(temporary, digest)
+            if reused is not None:
+                job = dict(id=uuid.uuid4().hex, status='ready', progress=100., stage='complete',
+                           filename=Path(filename).name[:180], created_at=time.time(),
+                           updated_at=time.time(), item=reused)
+                with self.jobs_lock:
+                    self.import_jobs[job['id']] = job
+                self.import_lock.release()
+                return copy.deepcopy(job)
             # Own the uploaded original before the HTTP request returns.
             prepared = self._prepare_file(temporary, filename)
             job_id = uuid.uuid4().hex
@@ -170,7 +218,7 @@ class MediaLibrary:
                        filename=Path(filename).name[:180], created_at=time.time(), updated_at=time.time())
             def work():
                 try:
-                    item = self._process_file(prepared, filename, job_id)
+                    item = self._process_file(prepared, filename, job_id, digest)
                     self._job_update(job_id, status='ready', progress=100., stage='complete', item=item)
                 except Exception as exc:
                     self._job_update(job_id, status='failed', stage='failed', error=str(exc))
@@ -198,14 +246,18 @@ class MediaLibrary:
             job = self.import_jobs.get(job_id)
             return copy.deepcopy(job) if job is not None else None
 
-    def add_file(self, temporary, filename):
+    def add_file(self, temporary, filename, source_sha256=None):
         if not self.import_lock.acquire(False):
             raise ImportBusy('正在导入素材，请稍后重试')
         try:
             with self.jobs_lock:
                 if self.closed:
                     raise ValueError('程序已关闭')
-            return self._process_file(self._prepare_file(temporary, filename), filename)
+            digest = self._source_hash(temporary, source_sha256)
+            reused = self._reuse_original(temporary, digest)
+            if reused is not None:
+                return reused
+            return self._process_file(self._prepare_file(temporary, filename), filename, source_sha256=digest)
         finally:
             self.import_lock.release()
 
@@ -229,6 +281,20 @@ class MediaLibrary:
         return probe, stream, duration
 
     @staticmethod
+    def _square_pixel_copy(stream):
+        sar = stream.get('sample_aspect_ratio', '1:1')
+        if sar in ('1:1', 'N/A', '0:1'):
+            return True
+        try:
+            ratio = Fraction(sar.replace(':', '/'))
+            width, height = int(stream['width']), int(stream['height'])
+            # The existing normalization filter would leave these pixels intact.
+            # Change the H.264 aspect metadata instead of re-encoding every frame.
+            return ratio > 0 and width % 2 == height % 2 == 0 and int(width * ratio / 2) * 2 == width
+        except (ValueError, TypeError, KeyError, ZeroDivisionError, OverflowError):
+            return False
+
+    @staticmethod
     def _copy_compatible(suffix, stream):
         rotations = [stream.get('tags', {}).get('rotate', 0)]
         rotations.extend(side.get('rotation', 0) for side in stream.get('side_data_list', []))
@@ -237,11 +303,11 @@ class MediaLibrary:
                               for value in rotations)
         except (TypeError, ValueError, OverflowError):
             rotation_ok = False
-        return (suffix == '.mp4' and stream.get('codec_name') == 'h264'
+        return (stream.get('codec_name') == 'h264'
                 and stream.get('pix_fmt') == 'yuv420p' and rotation_ok
-                and stream.get('sample_aspect_ratio', '1:1') in ('1:1', 'N/A', '0:1'))
+                and MediaLibrary._square_pixel_copy(stream))
 
-    def _process_file(self, prepared, filename, job_id=None):
+    def _process_file(self, prepared, filename, job_id=None, source_sha256=None):
         key, folder, original, suffix, images = prepared
         try:
             if suffix in images:
@@ -263,6 +329,9 @@ class MediaLibrary:
                     '-copyts', '-i', str(original), '-map', '0:v:0', '-an']
                 if copy_stream:
                     command += ['-c:v', 'copy', '-copytb', '1']
+                    if stream.get('sample_aspect_ratio', '1:1') not in ('1:1', 'N/A', '0:1'):
+                        command += ['-bsf:v', 'h264_metadata=sample_aspect_ratio=1/1']
+                        method = 'lossless_aspect_remux'
                 else:
                     # No -r or CFR conversion: each decoded frame keeps its PTS.
                     command += ['-vf', 'scale=trunc(iw*sar/2)*2:ih,setsar=1,pad=ceil(iw/2)*2:ceil(ih/2)*2',
@@ -295,7 +364,9 @@ class MediaLibrary:
             with file.open('rb') as source:
                 digest = hashlib.file_digest(source, 'sha256').hexdigest()
             row = dict(id=key, title=Path(filename).name[:180], origin='upload', file=file.name,
-                       thumb='thumb.jpg', sha256=digest, **meta)
+                       thumb='thumb.jpg', sha256=digest,
+                       original_sha256=source_sha256 or self._source_hash(original, None),
+                       original_bytes=original.stat().st_size, **meta)
             (folder/'item.json').write_text(json.dumps(row, ensure_ascii=False, indent=2), encoding='utf-8')
             with self.lock:
                 if self.closed:

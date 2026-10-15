@@ -16,7 +16,7 @@ os.environ.setdefault('OMP_NUM_THREADS','1')
 
 
 def main():
-    parser = argparse.ArgumentParser(description='ASTRA 视觉预览')
+    parser = argparse.ArgumentParser(description='robotmaster')
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--data-dir', type=Path)
@@ -124,5 +124,5 @@ if __name__ == '__main__':
         (root/'startup-error.log').write_text(error, encoding='utf-8')
         if getattr(sys, 'frozen', False) and '--no-browser' not in sys.argv and '--self-test' not in sys.argv:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(0, '程序启动失败，错误记录已保存到 '+str(root/'startup-error.log'), 'ASTRA', 0x10)
+            ctypes.windll.user32.MessageBoxW(0, '程序启动失败，错误记录已保存到 '+str(root/'startup-error.log'), 'robotmaster', 0x10)
         raise

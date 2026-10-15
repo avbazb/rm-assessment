@@ -111,6 +111,10 @@ def admission(observation,image=None):
     score=float(observation.get("score",0))
     geometry=float(observation.get("geometry_score") or 0)
     evidence=observation.get('fusion_evidence') or {}
+    if (source=='classical' and evidence.get('status')=='rotation_roi_verified' and
+            evidence.get('current_lamp_measurement') is True and geometry>=.52 and
+            0<=float(evidence.get('model_age_s',math.inf))<=.30):
+        return 'strong'
     if (source=='classical' and evidence.get('status')=='traditional_reference_verified' and
             evidence.get('model_assistance') is False and score>=.45 and
             float(evidence.get('joint_margin') or 0)>=-.03):

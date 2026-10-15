@@ -41,7 +41,7 @@ def _deduplicate(candidates):
     return sorted(selected, key=lambda a: (a.center[0], a.center[1]))
 
 
-def _bars(image):
+def _bars(image, chromatic_cores=False):
     height, width = image.shape[:2]
     b, g, r = cv2.split(image)
     value = cv2.max(cv2.max(b, g), r)
@@ -61,6 +61,12 @@ def _bars(image):
     for color in ('red', 'blue'):
         mask = (seeds[color] & (value >= 150)).astype(np.uint8)*255
         masks.append((color, cv2.morphologyEx(mask, cv2.MORPH_CLOSE, _K3)))
+        if chromatic_cores:
+            # Saturated lamps can have yellow/cyan cores with a dark opposite
+            # channel. min(B,G,R) misses them while a full color blob includes
+            # the bloom. The middle channel isolates their measured bright core.
+            for threshold in (100, 160):
+                masks.append((color, (seeds[color] & (g >= threshold) & (value >= 170)).astype(np.uint8)*255))
     candidates = []
     for origin, mask in masks:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

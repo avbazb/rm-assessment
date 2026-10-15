@@ -27,6 +27,11 @@ def geometry_for_pose(observation):
     status = 'accepted'
     reason = None
     fractions = None
+    evidence=observation.get('fusion_evidence') or {}
+    if evidence.get('status')=='rotation_roi_verified' and evidence.get('measured_lamp_extent_fraction',1.)<.25:
+        out.update(corners=None,geometry_valid=False,geometry_score=None,geometry_reason='incomplete_rotation_lamp_extent')
+        out['pose_geometry_guard']=dict(policy='rotation_measured_lamp_extent',status='rejected',reason='incomplete_rotation_lamp_extent')
+        return out
     try:
         q = np.asarray(observation['corners'], dtype=float)
         box = np.asarray(observation['bbox'], dtype=float)

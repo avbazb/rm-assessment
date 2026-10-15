@@ -1,4 +1,4 @@
-/* ASTRA portable preview. No external runtime or network resources. */
+/* robotmaster portable preview. No external runtime or network resources. */
 (() => {
   "use strict";
   const page = document.body.dataset.page || "detection";
@@ -48,7 +48,7 @@
     ready: false, preparedMode: null, preparingMode: null, imageReady: false, exporting: false,
     horizon: 0.15, predictionEnabled: false, analysisController: null, failed: false,
     view: null, displayCompletions: [], displayCount: 0, lastDisplayTime: null, lastDetailAt: 0,
-    overlayReference: null, overlayFrame: null, spinTarget: null, spinView: null
+    overlayReference: null, overlayFrame: null, spinTarget: null, spinView: null, spinRobotTarget: null, spinSelectedRobot: null
   };
   try {
     const saved = JSON.parse(localStorage.getItem("astra-calibration") || "null");
@@ -60,7 +60,7 @@
 
   document.getElementById("app").innerHTML = `
     <header class="topbar">
-      <a class="brand" href="/">ASTRA <span>视觉实验</span></a>
+      <a class="brand" href="/">robotmaster <span>视觉实验</span></a>
       <nav class="navigation" aria-label="主导航">
         <a href="/" ${page === "detection" ? 'aria-current="page"' : ""}>检测预览</a>
         <a href="/motion.html" ${motionPage ? 'aria-current="page"' : ""}>运动预测</a>
@@ -88,7 +88,7 @@
           </div>
           <div class="overlay-controls">
             <label class="checkbox-label"><input id="showBoxes" type="checkbox" checked>检测框</label>
-            <label class="checkbox-label"><input id="showTraditional" type="checkbox" checked>传统框</label>
+            ${spinPage ? '<input id="showTraditional" type="checkbox" hidden>' : '<label class="checkbox-label"><input id="showTraditional" type="checkbox" checked>传统框</label>'}
             <label class="checkbox-label"><input id="showLamps" type="checkbox" checked>灯条</label>
             <label class="checkbox-label"><input id="showPrediction" type="checkbox" ${state.predictionEnabled ? "checked" : ""}><span id="predictionLabel">预测 +0.150 s</span></label>
             <label class="checkbox-label"><input id="showHistory" type="checkbox" ${predictionPage ? "checked" : ""}>历史轨迹</label>
@@ -103,14 +103,14 @@
       </section>
       <aside class="inspector" aria-label="目标状态">
         <div class="section-heading"><h2>目标状态</h2><span id="targetCount" class="count">0</span></div>
-        <table class="target-table"><thead><tr><th>ID</th><th>评分 / 置信度</th><th>位置 · px</th></tr></thead><tbody id="targetRows"><tr class="empty-row"><td colspan="3">等待检测</td></tr></tbody></table>
-        ${spinPage ? `<section class="spin-controls"><div class="section-heading"><h2>旋转状态</h2><span class="target-state" id="spinStatus">等待观测</span></div><div class="dialog-grid"><label class="field">装甲板数量<select id="spinPlateCount"><option value="4">4</option><option value="3">3</option><option value="2">2</option></select></label><label class="field">旋转半径 · m<input id="spinRadius" type="number" min="0.05" max="1" step="0.01" value="0.25"></label><label class="field">弹速 · m/s<input id="spinSpeed" type="number" min="1" max="100" step="1" value="15"></label><label class="field">执行延迟 · ms<input id="spinExecution" type="number" min="0" max="500" step="10" value="30"></label></div><div class="control-row"><button id="spinSelectTarget">锁定所选目标</button><button id="spinResetTarget">重新选择</button></div><dl class="measurements"><div class="measurement"><dt>旋转目标</dt><dd id="spinTarget">自动选择</dd></div><div class="measurement"><dt>角速度 · rad/s</dt><dd id="spinOmega">—</dd></div><div class="measurement"><dt>角加速度 · rad/s²</dt><dd id="spinAlpha">—</dd></div><div class="measurement"><dt>有效帧 / 时长</dt><dd id="spinSamples">—</dd></div><div class="measurement"><dt>观测年龄 · ms</dt><dd id="spinAge">—</dd></div><div class="measurement"><dt>预测板位</dt><dd id="spinSlot">—</dd></div><div class="measurement"><dt>窗口决策</dt><dd id="spinWindow">等待</dd></div><div class="measurement"><dt>抵达总提前 · ms</dt><dd id="spinArrival">—</dd></div></dl></section>` : ''}
+        <table class="target-table"><thead><tr><th>ID</th><th>${spinPage ? "拟合评分" : "评分 / 置信度"}</th><th>位置 · px</th></tr></thead><tbody id="targetRows"><tr class="empty-row"><td colspan="3">等待检测</td></tr></tbody></table>
+        ${spinPage ? `<section class="spin-controls"><div class="section-heading"><h2>旋转状态</h2><span class="target-state" id="spinStatus">等待观测</span></div><div class="dialog-grid"><label class="field">装甲板数量<select id="spinPlateCount"><option value="4">4</option><option value="3">3</option><option value="2">2</option></select></label><label class="field">旋转半径 · m<input id="spinRadius" type="number" min="0.05" max="1" step="0.01" value="0.25"></label></div><div class="control-row"><button id="spinSelectTarget">锁定所选目标</button><button id="spinResetTarget">重新选择</button></div><dl class="measurements"><div class="measurement"><dt>旋转目标</dt><dd id="spinTarget">自动选择</dd></div><div class="measurement"><dt>角速度 · rad/s</dt><dd id="spinOmega">—</dd></div><div class="measurement"><dt>角加速度 · rad/s²</dt><dd id="spinAlpha">—</dd></div><div class="measurement"><dt>有效帧 / 时长</dt><dd id="spinSamples">—</dd></div><div class="measurement"><dt>观测年龄 · ms</dt><dd id="spinAge">—</dd></div><div class="measurement"><dt>预测板位</dt><dd id="spinSlot">—</dd></div><div class="measurement"><dt>窗口决策</dt><dd id="spinWindow">等待</dd></div><div class="measurement"><dt>总提前 · ms</dt><dd id="spinArrival">—</dd></div></dl></section>` : ''}
         <section id="targetDetail" class="target-detail" hidden>
           <div class="detail-heading"><h3 id="selectedTitle">目标</h3><span class="target-state" id="selectedState">—</span></div>
           <dl class="measurements">
-            <div class="measurement"><dt>位置 · px</dt><dd id="detailPosition">—</dd></div>
+            <div class="measurement"><dt>${spinPage ? "车体中心" : "位置"} · px</dt><dd id="detailPosition">—</dd></div>
             <div class="measurement"><dt>速度 · px/s</dt><dd id="detailVelocity">—</dd></div>
-            <div class="measurement"><dt>估算 XYZ · m</dt><dd id="detailXYZ">—</dd></div>
+            <div class="measurement"><dt>${spinPage ? "当前板 XYZ" : "估算 XYZ"} · m</dt><dd id="detailXYZ">—</dd></div>
             <div class="measurement"><dt>估算距离 · m</dt><dd id="detailRange">—</dd></div>
             <div class="measurement"><dt>旋转向量 · rad</dt><dd id="detailRotation">—</dd></div>
             <div class="measurement"><dt id="detailHorizon">预测 +0.150 s</dt><dd id="detailPrediction">—</dd></div>
@@ -147,6 +147,7 @@
         decodedContext.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
         state.mediaFrame = {timestamp: metadata.mediaTime, epoch: state.epoch, sourceURL: video.currentSrc, captured: true};
         renderLiveFrame(state.source === "camera" ? sourceTimestamp() : metadata.mediaTime);
+        if (spinPage && !state.busy && isPlaying()) void analyzeFrame();
       }
       video.requestVideoFrameCallback(onVideoFrame);
     };
@@ -225,7 +226,7 @@
     state.failed = false;
     state.view = null; state.lastDisplayTime = null; state.displayCompletions = []; state.displayCount = 0;
     state.overlayReference = null; state.overlayFrame = null;
-    state.spinTarget = null; state.spinView = null;
+    state.spinTarget = null; state.spinView = null; state.spinRobotTarget = null; state.spinSelectedRobot = null;
     $("stage").dataset.pointMode = "false";
     if (clear) { state.result = null; state.snapshot = null; state.presentedAt = null; state.selectedIndex = -1; state.selectedTrack = null; clearCanvas(); renderTargets(); }
     renderImpact();
@@ -357,6 +358,7 @@
     const mode = $("detectionMode").value;
     const horizon = state.horizon;
     const predictionEnabled = $("showPrediction").checked;
+    const rotationSignature = spinPage ? JSON.stringify(rotationSettings()) : null;
     const sourceId = state.item?.id ?? null;
     const started = performance.now();
     let captureMs = 0, payloadMs = 0, requestMs = 0;
@@ -374,7 +376,7 @@
       if (epoch !== state.epoch) return;
       const headersFor = value => {
         const headers = {...value.headers};
-        if (spinPage) headers["X-Rotation"] = encodeURIComponent(JSON.stringify(rotationSettings()));
+        if (spinPage) {headers["X-Rotation"] = encodeURIComponent(rotationSignature);headers["X-Rotation-Live"]=isPlaying()?"1":"0";}
         if (state.calibration) headers["X-Calibration"] = encodeURIComponent(JSON.stringify(state.calibration));
         return headers;
       };
@@ -407,6 +409,7 @@
       if (state.requestHistory.length > 40) state.requestHistory.shift();
       if (epoch !== state.epoch || mode !== $("detectionMode").value) return;
       if (horizon !== state.horizon) { askFrame(); return; }
+      if (spinPage && rotationSignature !== JSON.stringify(rotationSettings())) {askFrame();return;}
       if (!$("showPrediction").checked) {
         result.motion_estimates = []; result.future_prediction = disabledPrediction(); result.prediction_enabled = false;
       }
@@ -461,7 +464,7 @@
     updateControls();
     // Keep inference scheduling independent from the compositor's background-tab RAF throttle.
     // The busy flag remains the only admission gate: this timer never queues captured frames.
-    setTimeout(frameLoop, 40);
+    setTimeout(frameLoop, spinPage ? 16 : 40);
   }
   function isPlaying() { return (state.source === "video" || state.source === "camera") && !video.paused && !video.ended && !video.seeking && !state.scrubbing; }
   function rawTracks() { return [...(state.result?.tracks || []), ...(state.result?.tentative_tracks || [])]; }
@@ -533,7 +536,20 @@
     const pose = trackFor(obs, index)?.pose ?? obs.pose;
     return pose?.status === "estimated" && Array.isArray(pose.tvec_m) && pose.tvec_m.length === 3 && pose.tvec_m.every(finite) ? pose : null;
   }
+  function rotorForObservation(index) { return state.result?.rotation?.robots?.find(r=>r.observation_indices.includes(index)); }
+  function renderRotorTargets() {
+    const robots=state.result.rotation.robots;
+    if((state.spinRobotTarget==null&&state.spinTarget==null)||!robots.some(r=>r.robot_id===state.spinSelectedRobot))state.spinSelectedRobot=state.result.rotation.robot_id;
+    const selected=robots.find(r=>r.robot_id===state.spinSelectedRobot);
+    state.selectedIndex=selected?.observation_indices[0]??-1;
+    state.selectedTrack=state.selectedIndex<0?null:idFor(state.result.observations[state.selectedIndex],state.selectedIndex);
+    $("targetCount").textContent=robots.length;
+    $("targetRows").innerHTML=robots.map(r=>`<tr class="target-row" tabindex="0" data-robot-id="${r.robot_id}" aria-selected="${r.robot_id===state.spinSelectedRobot}"><td>R${r.robot_id}</td><td>${r.model?num(r.model.fit_score,2):'二维跟踪'}</td><td>${xy(r.center)}</td></tr>`).join('')||'<tr class="empty-row"><td colspan="3">等待目标</td></tr>';
+    $("targetRows").querySelectorAll('[data-robot-id]').forEach(row=>{const select=()=>{state.spinSelectedRobot=Number(row.dataset.robotId);state.spinRobotTarget=state.spinSelectedRobot;state.spinTarget=null;state.spinView=null;renderRotorTargets();drawFrame();askFrame();};row.addEventListener('click',select);row.addEventListener('keydown',e=>{if(e.key==='Enter')select();});});
+    renderDetail();renderImpact();
+  }
   function renderTargets() {
+    if(spinPage && state.result?.rotation?.schema==='astra.rotor-visual.v1'){renderRotorTargets();return;}
     const observations = state.result?.observations || [];
     if (state.selectedTrack != null) {
       const retained = observations.findIndex((obs, index) => idFor(obs, index) === state.selectedTrack);
@@ -570,18 +586,20 @@
     if (!obs && !track) { if (posePage) drawPoseView(); return; }
     const id = track?.track_id ?? (obs ? idFor(obs, state.selectedIndex) : null);
     const pose = poseFor(obs, state.selectedIndex);
-    const prediction = futureFor(id);
-    $("selectedTitle").textContent = id == null ? "目标" : `目标 ${id}`;
-    $("selectedState").textContent = track ? (!track.observed ? "短时外推" : track.confirmed === false || track.status === "tentative" ? "待确认" : "跟踪中") : "已检测";
-    $("detailPosition").textContent = xy(track?.center ?? obs?.center);
-    $("detailVelocity").textContent = xy(track?.velocity);
+    let prediction = futureFor(id);
+    const robot=spinPage?state.result?.rotation?.robots?.find(r=>r.robot_id===state.spinSelectedRobot):null;
+    if(robot){const view=state.result.rotation.robot_id===robot.robot_id?state.spinView:null;const chosen=view?.candidates.find(c=>c.plate===view.selected_plate);prediction={center:chosen?.center,status:view?.visual_ready?'ready':'waiting',reason:view?.reason,target_timestamp:view?.target_timestamp,observation_timestamp:robot.timestamp,uncertainty_radius_px:chosen?Math.max(...chosen.uncertainty_px):null};}
+    $("selectedTitle").textContent = robot?`目标 R${robot.robot_id}`:id == null ? "目标" : `目标 ${id}`;
+    $("selectedState").textContent = robot?(robot.observation_indices.length?"车体跟踪中":"短时保持"):track ? (!track.observed ? "短时外推" : track.confirmed === false || track.status === "tentative" ? "待确认" : "跟踪中") : "已检测";
+    $("detailPosition").textContent = xy(robot?.center ?? track?.center ?? obs?.center);
+    $("detailVelocity").textContent = xy(robot?.velocity ?? track?.velocity);
     $("detailXYZ").textContent = pose ? pose.tvec_m.map(value => num(value, 3)).join(", ") : "—";
     $("detailRange").textContent = pose ? num(pose.range_m, 3) : "—";
     const rotation = pose?.orientation_readout ? pose.orientation_readout.rvec_for_display : pose?.orientation_status === "waiting" ? null : pose?.rvec_rad;
     $("detailRotation").textContent = Array.isArray(rotation) && rotation.every(finite) ? rotation.map(value => num(value, 3)).join(", ") : "—";
     $("detailPrediction").textContent = !$("showPrediction").checked ? "—" : pair(prediction?.center) ? xy(prediction.center) : "等待";
     if (predictionPage) {
-      const estimate = motionFor(id);
+      const estimate = robot?{samples:robot.model?.samples??0,measurement_span_s:robot.model?.span_s??0}:motionFor(id);
       $("detailPredictionState").textContent = !$("showPrediction").checked ? "已关闭" : prediction?.status === "ready" ? "可用" : prediction?.status === "estimated" ? `估计 · ${predictionReasons[prediction.reason] || "待确认"}` : predictionReasons[prediction?.reason] || "等待连续观测";
       $("detailPredictionTime").textContent = prediction ? `${num(prediction.observation_timestamp, 3)} / ${num(prediction.target_timestamp, 3)}` : "—";
       $("detailSamples").textContent = estimate ? `${estimate.samples} / ${num(estimate.measurement_span_s, 3)} s` : "—";
@@ -597,26 +615,26 @@
     }
   }
   function rotationSettings() {
-    return {plate_count: Number($("spinPlateCount").value), radius_m: Number($("spinRadius").value), projectile_speed_mps: Number($("spinSpeed").value), execution_delay_s: Number($("spinExecution").value)/1000, target_track: state.spinTarget};
+    return {plate_count: Number($("spinPlateCount").value), radius_m: Number($("spinRadius").value), target_track: state.spinTarget, target_robot: state.spinRobotTarget};
   }
-  const spinReasons = {prediction_disabled:"预测已关闭",waiting_for_observations:"等待可靠灯条",stale_observation:"观测不足或已过期",rotation_not_stable:"旋转状态建立中",waiting_for_window:"等待窗口",camera_calibration_required:"等待相机标定",clock_mismatch:"时间不匹配",current_frame_unobserved:"当前帧无可靠观测",ready:"窗口可用"};
+  const spinReasons = {prediction_uncertain:"预测不确定", prediction_expired:"预测已过期", prediction_disabled:"预测已关闭",waiting_for_observations:"等待可靠灯条",stale_observation:"观测不足或已过期",rotation_not_stable:"旋转状态建立中",waiting_for_window:"等待窗口",camera_calibration_required:"等待相机标定",clock_mismatch:"时间不匹配",current_frame_unobserved:"当前帧无可靠观测",ready:"窗口可用"};
   function renderSpin(timestamp) {
     const raw=state.result?.rotation;
     const frame=raw ? {...raw,enabled:$("showPrediction").checked} : null;
     state.spinView=AstraSpin.project(frame,timestamp??0,state.horizon,[canvas.width,canvas.height]);
     const view=state.spinView;
     $("spinStatus").textContent=spinReasons[view.reason]||"等待窗口";
-    $("spinTarget").textContent=state.spinTarget==null?"自动选择":`目标 ${state.spinTarget}`;
+    $("spinTarget").textContent=raw?.robot_id!=null?`R${raw.robot_id}`:state.spinTarget==null?"自动选择":`目标 ${state.spinTarget}`;
     const established=raw?.state && raw.samples>=raw.config.min_observations && raw.measurement_span_s>=raw.config.min_duration_s && Math.sqrt(raw.covariance[4][4])<=1;
     $("spinOmega").textContent=established?num(raw.state[4],3):"—"; $("spinAlpha").textContent=established?num(raw.state[5],3):"—";
-    $("spinSelectTarget").disabled=state.selectedTrack==null;
+    $("spinSelectTarget").disabled=raw?.schema==='astra.rotor-visual.v1'?state.spinSelectedRobot==null:state.selectedTrack==null;
     $("spinSamples").textContent=raw?`${raw.samples} / ${num(raw.measurement_span_s,3)} s`:"—";
     $("spinAge").textContent=finite(raw?.last_observation_timestamp)?num(Math.max(0,timestamp-raw.last_observation_timestamp)*1000,1):"—";
     $("spinSlot").textContent=view.selected_plate==null?"—":`P${view.selected_plate}`;
-    $("spinWindow").textContent=!$("showPrediction").checked?"已关闭":view.allow_fire?"窗口可用":"等待窗口";
+    $("spinWindow").textContent=!$("showPrediction").checked?"已关闭":view.visual_ready?"视觉窗口可用":view.allow_fire?"窗口可用":"等待窗口";
     const selected=raw?.decision?.candidates?.find(c=>c.plate===raw.decision.selected_plate);
-    $("spinArrival").textContent=num(selected?.prediction_horizon_s*1000,1);
-    canvas.dataset.rotation=JSON.stringify({reason:view.reason,enabled:view.enabled,candidates:view.candidates.filter(c=>c.valid),samples:raw?.samples??0,allow_fire:view.allow_fire});
+    $("spinArrival").textContent=num(raw?.schema==="astra.rotor-visual.v1"?(view.target_timestamp-raw.state_timestamp)*1000:selected?.prediction_horizon_s*1000,1);
+    canvas.dataset.rotation=JSON.stringify({reason:view.reason,enabled:view.enabled,candidates:view.candidates.filter(c=>c.valid),samples:raw?.samples??0,allow_fire:view.allow_fire,visual_ready:!!view.visual_ready,robot_id:raw?.robot_id??null,selected_plate:view.selected_plate,selected_observation_index:view.selected_observation_index});
   }
   function strokeLine(a, b, color, width) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); }
   function drawPrediction(center, prediction, unit) {
@@ -694,30 +712,31 @@
     ctx.font = `600 ${labelSize}px "Segoe UI", "Microsoft YaHei", sans-serif`;
     tracks().forEach(track => {
       const color = track.color === "red" ? palette["lamp-red"] : palette["lamp-blue"];
-      if ($("showHistory").checked) {
+      if ($("showHistory").checked && !(spinPage && state.result?.rotation?.schema==='astra.rotor-visual.v1')) {
         const history = (track.history || []).filter(point => pair(point.center));
         for (let i = 1; i < history.length; i++) {
           if (!history[i].observed || !history[i - 1].observed) ctx.setLineDash([4 * unit, 4 * unit]);
           strokeLine(history[i - 1].center, history[i].center, color, 1.5 * unit); ctx.setLineDash([]);
         }
       }
-      if ($("showFiltered").checked && pair(track.center)) {
+      if ($("showFiltered").checked && pair(track.center) && !(spinPage && state.result?.rotation?.schema==='astra.rotor-visual.v1')) {
         ctx.strokeStyle = palette.geometry; ctx.lineWidth = 2 * unit;
         ctx.beginPath(); ctx.arc(...track.center, 4 * unit, 0, Math.PI * 2); ctx.stroke();
       }
-      if ((!spinPage || !state.spinView?.candidates.some(p=>p.valid)) && !track.observed) drawPrediction(track.center, futureFor(track.track_id), unit);
+      if ((!spinPage || state.result?.rotation?.schema!=='astra.rotor-visual.v1' && !state.spinView?.candidates.some(p=>p.valid)) && !track.observed) drawPrediction(track.center, futureFor(track.track_id), unit);
     });
     const observations = live ? state.view.observations : state.result?.observations || [];
     observations.forEach((obs, displayIndex) => {
       const index = obs.display_index ?? displayIndex;
       const color = obs.color === "red" ? palette["lamp-red"] : obs.color === "blue" ? palette["lamp-blue"] : palette["geometry"];
-      const selected = index === state.selectedIndex;
+      const selected = index === state.selectedIndex || spinPage && index===state.spinView?.selected_observation_index;
       if ($("showBoxes").checked && Array.isArray(obs.bbox) && obs.bbox.length === 4 && obs.bbox.every(finite)) {
         const [x1, y1, x2, y2] = obs.bbox;
         ctx.strokeStyle = color; ctx.lineWidth = (selected ? 2.5 : 1.5) * unit;
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
         const id = idFor(obs, index);
-        const label = `${live ? trackFor(obs,index) ? "跟踪 " : "检测 " : obs.source === "classical" ? "传统 " : ""}${id != null ? `#${id}  ` : ""}${finite(obs.score) ? `${num(obs.score * 100, 1)}%` : ""}`;
+        const robotLabel=spinPage?rotorForObservation(index):null;
+        const label = robotLabel?`R${robotLabel.robot_id}  ${finite(obs.score)?num(obs.score*100,1)+'%':''}`:`${live ? trackFor(obs,index) ? "跟踪 " : "检测 " : obs.source === "classical" ? "传统 " : ""}${id != null ? `#${id}  ` : ""}${finite(obs.score) ? `${num(obs.score * 100, 1)}%` : ""}`;
         if (label) {
           const padding = 4 * unit, textWidth = ctx.measureText(label).width;
           const top = Math.max(0, y1 - labelSize - padding * 2), left = Math.min(Math.max(0, x1), Math.max(0, canvas.width - textWidth - padding * 2));
@@ -743,8 +762,15 @@
         strokeLine(axes[0], axes[2], palette.geometry, 2 * unit);
         strokeLine(axes[0], axes[3], palette["lamp-blue"], 2 * unit);
       }
-      if (!spinPage || !state.spinView?.candidates.some(p=>p.valid)) drawPrediction(trackFor(obs, index)?.center ?? obs.center, futureFor(idFor(obs, index)), unit);
+      if (!spinPage || state.result?.rotation?.schema!=='astra.rotor-visual.v1' && !state.spinView?.candidates.some(p=>p.valid)) drawPrediction(trackFor(obs, index)?.center ?? obs.center, futureFor(idFor(obs, index)), unit);
     });
+    if (spinPage && state.result?.rotation?.schema==='astra.rotor-visual.v1') {
+      for(const robot of state.result.rotation.robots){
+        const color=robot.color==='red'?palette['lamp-red']:palette['lamp-blue'];
+        if($("showHistory").checked)for(let i=1;i<robot.history.length;i++)strokeLine(robot.history[i-1].center,robot.history[i].center,color,1.5*unit);
+        if($("showFiltered").checked){ctx.strokeStyle=palette.geometry;ctx.lineWidth=2*unit;ctx.beginPath();ctx.arc(...robot.center,4*unit,0,Math.PI*2);ctx.stroke();}
+      }
+    }
     if (spinPage && state.spinView) {
       const markers = state.spinView.candidates.filter(p => p.valid && pair(p.center));
       for (const marker of markers) {
@@ -755,6 +781,7 @@
     }
     if ($("showTraditional").checked && state.result?.detection_mode !== "classical") {
       (live ? state.view.traditional_observations : state.result?.traditional_observations || []).forEach(obs => {
+        if(spinPage && state.result?.rotation?.schema==='astra.rotor-visual.v1')return;
         if (!Array.isArray(obs.bbox) || obs.bbox.length !== 4 || !obs.bbox.every(finite)) return;
         const [x1,y1,x2,y2] = obs.bbox;
         ctx.strokeStyle = palette.geometry; ctx.lineWidth = unit;
@@ -823,12 +850,15 @@
     let lastItem = null;
     try {
       for (const [index, file] of files.entries()) {
+        $("uploadButton").textContent = "正在接收";
         let data = await request(`/api/media?filename=${encodeURIComponent(file.name)}&async=1`, {method: "POST", headers: {"Content-Type": file.type || "application/octet-stream"}, body: file}, 120000);
         if (data.job) {
           const id = data.job.id;
           if (typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("素材导入状态无效");
           let deadline = performance.now() + 30 * 60 * 1000;
           while (data.job.status === "processing") {
+            const stages = {probing: "读取信息", remuxing: "整理视频", transcoding: "兼容处理", thumbnail: "生成缩略图", registering: "加入素材库"};
+            $("uploadButton").textContent = stages[data.job.stage] || "正在导入";
             $("uploadProgress").value = index * 100 + Math.max(0, Math.min(100, Number(data.job.progress) || 0));
             if (performance.now() > deadline) throw new Error("素材导入超时，请重新上传");
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -843,7 +873,7 @@
       }
       notice();
     } catch (error) { notice(error.message); }
-    finally { $("uploadButton").disabled = false; $("uploadProgress").hidden = true; event.target.value = ""; if (lastItem) await selectMedia(lastItem); }
+    finally { $("uploadButton").disabled = false; $("uploadButton").textContent = "上传素材"; $("uploadProgress").hidden = true; event.target.value = ""; if (lastItem) await selectMedia(lastItem); }
   });
   $("cameraButton").addEventListener("click", () => void toggleCamera());
   $("retryButton").addEventListener("click", async () => {
@@ -912,8 +942,8 @@
   }
   if (predictionPage) ["input", "change"].forEach(name => $("horizonMs").addEventListener(name, selectHorizon));
   if (spinPage) {
-    ["spinPlateCount","spinRadius","spinSpeed","spinExecution"].forEach(id=>$(id).addEventListener("change",()=>{state.spinView=null;if(state.result)state.result.rotation=null;showLoadedFrame();askFrame();}));
-    $("spinSelectTarget").addEventListener("click",()=>{if(state.selectedTrack==null)return;state.spinTarget=state.selectedTrack;state.spinView=null;if(state.result)state.result.rotation=null;askFrame();});
+    ["spinPlateCount","spinRadius"].forEach(id=>$(id).addEventListener("change",()=>{state.spinView=null;if(state.result)state.result.rotation=null;showLoadedFrame();askFrame();}));
+    $("spinSelectTarget").addEventListener("click",()=>{if(state.spinSelectedRobot!=null){state.spinRobotTarget=state.spinSelectedRobot;state.spinTarget=null;}else {if(state.selectedTrack==null)return;state.spinTarget=state.selectedTrack;}state.spinView=null;if(state.result)state.result.rotation=null;askFrame();});
     $("spinResetTarget").addEventListener("click",()=>{resetEpoch();showLoadedFrame();askFrame();});
   }
   if (posePage) {
@@ -928,7 +958,7 @@
     if (state.exporting || !state.snapshot) return;
     state.exporting = true;
     $("exportButton").disabled = true;
-    const filename = `ASTRA-${impactPage ? "落点" : "检测"}-${num(state.presentedAt, 3)}s.png`;
+    const filename = `robotmaster-${impactPage ? "落点" : "检测"}-${num(state.presentedAt, 3)}s.png`;
     const exportFrame = document.createElement("canvas");
     exportFrame.width = canvas.width; exportFrame.height = canvas.height;
     exportFrame.getContext("2d").drawImage(canvas, 0, 0);

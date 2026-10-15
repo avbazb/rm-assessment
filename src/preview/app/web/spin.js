@@ -4,7 +4,40 @@
   function strict(result = {tracks:[]}) {
     return {...result,tracks:(result.tracks||[]).map(p=>p.status==='ready'?p:{...p,status:'waiting',center:null,usable:false})};
   }
+  function visual(frame,timestamp,horizon,imageSize) {
+    const base={enabled:!!frame?.enabled,timestamp,target_timestamp:timestamp+horizon,candidates:[],selected_plate:null,selected_observation_index:null,allow_fire:false,visual_ready:false};
+    if(!base.enabled)return {...base,reason:'prediction_disabled'};
+    const robot=frame.robots.find(r=>r.robot_id===frame.robot_id),m=frame.model;
+    if(robot?.observation_indices.length)base.selected_observation_index=robot.observation_indices[0];
+    if(!m)return {...base,reason:'rotation_not_stable'};
+    const dt=timestamp+horizon-m.timestamp,age=timestamp-robot.timestamp,cfg=frame.config;
+    if(dt<0)return {...base,reason:'clock_mismatch'};
+    if(age>cfg.max_gap_s||timestamp-m.timestamp>.16)return {...base,reason:'stale_observation'};
+    if(dt>cfg.max_prediction_horizon_s)return {...base,reason:'prediction_expired'};
+    const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0),normalize=a=>{const n=Math.hypot(...a);return a.map(v=>v/n);};
+    const covariance=(a,p)=>a.reduce((s,x,i)=>s+x*a.reduce((v,y,j)=>v+p[i][j]*y,0),0);
+    const a=[1,dt,dt*dt/2],phase=m.phase+m.omega*dt+m.alpha*dt*dt/2;
+    const angularStd=Math.sqrt(Math.max(0,covariance(a,m.angular_covariance))),maneuver=.5*cfg.unknown_acceleration_bound_rad_s2*dt*dt;
+    const axis=m.axis_camera;let front=[0,0,-1];const v=dot(front,axis);front=normalize(front.map((x,i)=>x-axis[i]*v));
+    let side=[axis[1]*front[2]-axis[2]*front[1],axis[2]*front[0]-axis[0]*front[2],axis[0]*front[1]-axis[1]*front[0]];if(side[0]<0)side=side.map(x=>-x);
+    const k=frame.calibration.camera_matrix;let view=[-(robot.center[0]-k[0][2])/k[0][0],-(robot.center[1]-k[1][2])/k[1][1],-1];const av=dot(view,axis);view=normalize(view.map((x,i)=>x-axis[i]*av));
+    for(let slot=0;slot<cfg.plate_count;slot++){
+      const phi=phase+slot*2*Math.PI/cfg.plate_count,sn=Math.sin(phi),cs=Math.cos(phi),normal=front.map((x,i)=>x*cs+side[i]*sn);
+      const terms=[sn,cs],derivatives=[cs,-sn],pixel=[],bounds=[];
+      for(let i=0;i<2;i++){
+        const vector=[1,dt,terms[i]],coeff=m.coefficients[i],slope=Math.abs(coeff[2]*derivatives[i]);pixel.push(dot(vector,coeff));
+        let sigma=Math.sqrt(Math.max(0,covariance(vector,m.pixel_covariance[i])));
+        if(m.joint_covariance){const jac=Array(9).fill(0);for(let j=0;j<3;j++){jac[j]=a[j]*coeff[2]*derivatives[i];jac[3+i*3+j]=vector[j];}sigma=Math.sqrt(Math.max(0,covariance(jac,m.joint_covariance)));bounds.push(2*sigma+slope*maneuver);}
+        else bounds.push(2*sigma+2*slope*angularStd+slope*maneuver);
+      }
+      const face=dot(normal,view),faceOk=face>=Math.cos(cfg.max_face_angle_deg*Math.PI/180),futureWidth=m.width*Math.max(.3,face);
+      const uncertain=bounds[0]>Math.max(8,futureWidth*.55)||bounds[1]>Math.max(5,m.height*.60),inside=!imageSize||pixel[0]>=0&&pixel[0]<imageSize[0]&&pixel[1]>=0&&pixel[1]<imageSize[1];
+      const valid=faceOk&&!uncertain&&inside;base.candidates.push({plate:slot,center:valid?pixel:null,candidate_center:pixel,facing_cos:face,uncertainty_px:bounds,valid,reason:valid?'ready':!inside?'outside_image':uncertain?'prediction_uncertain':'waiting_for_window'});
+    }
+    const selected=base.candidates.reduce((a,b)=>a.facing_cos>b.facing_cos?a:b);base.selected_plate=selected.plate;base.visual_ready=selected.valid;base.reason=selected.reason;return base;
+  }
   function project(frame,timestamp,horizon,imageSize) {
+    if(frame?.schema==='astra.rotor-visual.v1')return visual(frame,timestamp,horizon,imageSize);
     const base={enabled:!!frame?.enabled, timestamp, target_timestamp:timestamp+horizon, candidates:[],selected_plate:null,allow_fire:false};
     if (!frame?.enabled) return {...base,reason:'prediction_disabled'};
     if (!frame.state || !frame.covariance) return {...base,reason:'waiting_for_observations'};

@@ -1,5 +1,6 @@
 """Loopback-only HTTP API and range-aware media serving."""
 import json
+import hashlib
 import mimetypes
 import os
 from pathlib import Path
@@ -36,7 +37,7 @@ class Application(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'AstraVision/' + VERSION
+    server_version = 'robotmaster/' + VERSION
     protocol_version = 'HTTP/1.1'
     disable_nagle_algorithm = True
 
@@ -98,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith('/thumb/'):
                 self.file_response(self.server.media.thumbs.get(path.removeprefix('/thumb/').removesuffix('.jpg')))
             elif re.fullmatch(r'/exports/[a-f0-9]{32}\.png', path):
-                self.file_response(self.server.exports/path.split('/')[-1], attachment='ASTRA.png')
+                self.file_response(self.server.exports/path.split('/')[-1], attachment='robotmaster.png')
             elif path.startswith('/api/imports/'):
                 job = self.server.media.import_status(path.removeprefix('/api/imports/'))
                 self.json_response({'job': job} if job else {'error': '导入任务不存在'}, 200 if job else 404)
@@ -125,6 +126,7 @@ class Handler(BaseHTTPRequestHandler):
                 prediction_switch = query.get('prediction', '1')
                 if prediction_switch not in ('0','1'):
                     raise ValueError('预测开关无效')
+                if self.headers.get('X-Rotation-Live','1') not in ('0','1'):raise ValueError('旋转实时开关无效')
                 body_started = time.perf_counter()
                 payload = self.body(32*1024*1024)
                 body_ms = (time.perf_counter()-body_started)*1000
@@ -137,7 +139,8 @@ class Handler(BaseHTTPRequestHandler):
                     frame_width=int(self.headers.get('X-Frame-Width','0')),
                     frame_height=int(self.headers.get('X-Frame-Height','0')),
                     prediction_enabled=prediction_switch == '1',
-                    rotation_options=json.loads(unquote(self.headers['X-Rotation'])) if self.headers.get('X-Rotation') else None)
+                    rotation_options=json.loads(unquote(self.headers['X-Rotation'])) if self.headers.get('X-Rotation') else None,
+                    rotation_live=self.headers.get('X-Rotation-Live','1')!='0')
                 result['request_body_ms'] = body_ms
                 self.json_response(result)
             elif url.path == '/api/impact':
@@ -153,7 +156,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('保存画面须为 PNG')
                 name = uuid.uuid4().hex+'.png'
                 (self.server.exports/name).write_bytes(payload)
-                self.json_response(dict(url='/exports/'+name, filename=Path(query.get('filename', 'ASTRA.png')).name[:180]))
+                self.json_response(dict(url='/exports/'+name, filename=Path(query.get('filename', 'robotmaster.png')).name[:180]))
             elif url.path == '/api/shutdown':
                 self.body(1024)
                 self.json_response({'status': 'closing'})
@@ -189,6 +192,7 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < length <= 1024*1024*1024:
                 raise ValueError('素材须在 1 GB 以内')
             fd, temporary = tempfile.mkstemp(prefix='upload-', dir=self.server.data)
+            digest = hashlib.sha256()
             with os.fdopen(fd, 'wb') as target:
                 left = length
                 while left:
@@ -196,16 +200,17 @@ class Handler(BaseHTTPRequestHandler):
                     if not chunk:
                         raise ValueError('文件上传不完整')
                     target.write(chunk)
+                    digest.update(chunk)
                     left -= len(chunk)
             if parse_qs(urlsplit(self.path).query).get('async') == ['1']:
                 from .media import ImportBusy
                 try:
-                    job = self.server.media.begin_import(temporary, filename)
+                    job = self.server.media.begin_import(temporary, filename, digest.hexdigest())
                 except ImportBusy as exc:
                     raise Busy(str(exc)) from exc
                 self.json_response({'job': job}, 202)
             else:
-                item = self.server.media.add_file(temporary, filename)
+                item = self.server.media.add_file(temporary, filename, digest.hexdigest())
                 self.json_response({'item': item})
         finally:
             if temporary and Path(temporary).exists():

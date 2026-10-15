@@ -14,9 +14,9 @@ from astra_competition.spin import RotationTracker, SpinConfig
 def options(value):
     if value is None:
         return None
-    if not isinstance(value, dict) or set(value)-{'plate_count','radius_m','projectile_speed_mps','execution_delay_s','target_track'}:
+    if not isinstance(value, dict) or set(value)-{'plate_count','radius_m','projectile_speed_mps','execution_delay_s','target_track','target_robot'}:
         raise ValueError('旋转参数无效')
-    result = dict(plate_count=4, radius_m=.25, projectile_speed_mps=15., execution_delay_s=.03, target_track=None)
+    result = dict(plate_count=4, radius_m=.25, projectile_speed_mps=15., execution_delay_s=.03, target_track=None,target_robot=None)
     result.update(value)
     if isinstance(result['plate_count'], bool) or not isinstance(result['plate_count'],int) or result['plate_count'] not in (2,3,4):
         raise ValueError('装甲板数量须为2～4')
@@ -27,13 +27,15 @@ def options(value):
     tid=result['target_track']
     if tid is not None and (isinstance(tid,bool) or not isinstance(tid,int) or not 1<=tid<=1000000000):
         raise ValueError('旋转目标ID无效')
+    rid=result['target_robot']
+    if rid is not None and (isinstance(rid,bool) or not isinstance(rid,int) or not 1<=rid<=1000000000):raise ValueError('车体目标ID无效')
     return result
 
 
 class RotationPreview:
     def __init__(self, settings):
         self.settings=options(settings)
-        self.config=SpinConfig(**{k:v for k,v in self.settings.items() if k!='target_track'})
+        self.config=SpinConfig(**{k:v for k,v in self.settings.items() if k not in ('target_track','target_robot')})
         self.tracker=RotationTracker(self.config)
         self.color=None
         self.anchor=None

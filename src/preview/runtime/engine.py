@@ -18,6 +18,8 @@ from astra_competition.pose_filter import PoseContinuity
 from .detection_pipeline import DetectionPipeline
 from .orientation_guard import check_orientation
 from .rotation import RotationPreview, options as rotation_options_validated
+from .rotor_detection import ModelSlot, detect as detect_rotor
+from .visual_rotor import VisualRotorBank
 
 
 class Busy(Exception):
@@ -48,6 +50,7 @@ class Engine:
         self.request_timeout = request_timeout
         self.warmup_timeout = warmup_timeout
         self.pending = None
+        self.rotor_models = None
         self.task_started = None
         self.last_error = None
         cv2.setNumThreads(1)
@@ -81,6 +84,13 @@ class Engine:
             self.detector = DetectionPipeline(self.model_path)
         return self.detector.detect(image, timestamp, mode)
 
+    def _infer_rotor(self,image,timestamp,owner):
+        if self.detector is None:self.detector=DetectionPipeline(self.model_path)
+        if self.rotor_models is None:self.rotor_models=ModelSlot(self.detector)
+        observations,traditional,models,diag=detect_rotor(image,timestamp,owner,self.rotor_models)
+        self.detector.last_diagnostics=diag
+        return observations,traditional,models
+
     def warmup(self, mode='fusion'):
         if not self.lock.acquire(False):
             raise Busy('正在处理画面，请稍后重试')
@@ -110,7 +120,7 @@ class Engine:
         result['enabled'] = True
         return estimates, result
 
-    def _rotation_output(self, state, settings, observations, tracks, timestamp, calibration, enabled, horizon, age=0.):
+    def _rotation_output(self, state, settings, observations, tracks, timestamp, calibration, enabled, horizon, age=0.,image_size=None):
         if settings is None:
             state.pop('rotation', None)
             return None
@@ -118,10 +128,18 @@ class Engine:
         if current is None or current.settings!=settings:
             current=state['rotation']=RotationPreview(settings)
         current.update(observations, tracks, timestamp, calibration)
-        return current.publish(timestamp+age, enabled, horizon)
+        physical=current.publish(timestamp+age, enabled, horizon)
+        visual=state.get('visual_rotor')
+        if visual is None or {k:v for k,v in visual.settings.items() if k not in ('target_track','target_robot')}!={k:v for k,v in settings.items() if k not in ('target_track','target_robot')}:
+            visual=state['visual_rotor']=VisualRotorBank(settings)
+        elif visual.settings!=settings:
+            visual.settings=settings
+            visual.target=settings.get('target_robot')
+        visual.update(observations,tracks,timestamp,calibration)
+        return visual.publish(enabled,horizon,physical,timestamp+age,image_size)
 
     def analyze(self, payload, session, epoch, sequence, timestamp, horizon=.15, calibration=None, mode='fusion',
-                frame_format='encoded', frame_width=None, frame_height=None, prediction_enabled=True, rotation_options=None):
+                frame_format='encoded', frame_width=None, frame_height=None, prediction_enabled=True, rotation_options=None,rotation_live=True):
         if not self.lock.acquire(False):
             raise Busy('正在处理画面，请稍后重试')
         started = time.perf_counter()
@@ -132,6 +150,7 @@ class Engine:
                 raise ValueError('检测方式无效')
             if not isinstance(prediction_enabled, bool):
                 raise ValueError('预测开关无效')
+            if not isinstance(rotation_live,bool):raise ValueError('旋转实时开关无效')
             rotation_options=rotation_options_validated(rotation_options)
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', session):
                 raise ValueError('会话编号无效')
@@ -180,8 +199,10 @@ class Engine:
                     out['motion_estimates'], out['future_prediction'] = self._motion_output(
                         state, tracks, measured, timestamp, (w, h), prediction_enabled, horizon, refresh=False)
                     out['prediction_enabled'] = prediction_enabled
-                    out['rotation'] = self._rotation_output(state, rotation_options, out['observations'], tracks,
-                        timestamp, calibration, prediction_enabled, horizon)
+                    from .geometry_guard import geometry_for_pose
+                    out['rotation'] = self._rotation_output(state, rotation_options,
+                        [geometry_for_pose(o) for o in out['observations']], tracks,
+                        timestamp, calibration, prediction_enabled, horizon,image_size=(w,h))
                     out['cache_hit'] = True
                     state.update(sequence=sequence, touched=now, response=copy.deepcopy(out))
                     return out
@@ -190,7 +211,9 @@ class Engine:
                              forecaster=MotionForecaster(), poses=PoseContinuity(), orientations={})
             stage_started = time.perf_counter()
             stages = {'decode_and_prepare_ms': (stage_started-started)*1000}
-            observations,traditional,models = self._wait_task(self._infer, image, timestamp, mode, timeout=self.request_timeout)
+            observations,traditional,models = (self._wait_task(self._infer_rotor,image,timestamp,(session,epoch,signature),timeout=self.request_timeout)
+                if rotation_options is not None and rotation_live and mode=='fusion' else
+                self._wait_task(self._infer, image, timestamp, mode, timeout=self.request_timeout))
             stages['detection_ms'] = (time.perf_counter()-stage_started)*1000
             stage_started = time.perf_counter()
             measured = [tracking_measurement(o) for o in observations]
@@ -213,7 +236,7 @@ class Engine:
             stage_started = time.perf_counter()
             tracks = [*tracked['tracks'], *tracked['tentative_tracks']]
             rotation = self._rotation_output(state, rotation_options, pose_observations, tracks, timestamp,
-                calibration, prediction_enabled, horizon, time.perf_counter()-started)
+                calibration, prediction_enabled, horizon, time.perf_counter()-started,image_size=(w,h))
             estimates, prediction = self._motion_output(state, tracks, measured, timestamp, (w, h),
                                                         prediction_enabled, horizon)
             state['poses'].update(tracks, pose_observations, timestamp, calibration)
@@ -271,6 +294,7 @@ class Engine:
         with self.lock:
             self.closed = True
             self.worker.shutdown(wait=False, cancel_futures=True)
+            if self.rotor_models is not None:self.rotor_models.close()
             self.sessions.clear()
             self.detector = None
 
