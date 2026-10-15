@@ -124,7 +124,7 @@
   }
   function alignObservations(observations, tracks, timestamp, referenceTimestamp, imageSize, reference, current) {
     const dt = timestamp-referenceTimestamp;
-    if (!finite(dt) || dt < -.000002 || dt > .25) return [];
+    if (!finite(dt) || dt < -.000002 || dt > .40) return [];
     return (observations || []).map((obs,index) => {
       if (!obs.center?.every(finite) || !obs.bbox?.every(finite)) return null;
       const track = (tracks || []).find(t => t.observation_index === index || obs.track_id != null && t.track_id === obs.track_id);

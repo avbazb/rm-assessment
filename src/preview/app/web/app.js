@@ -473,7 +473,8 @@
     if (!isPlaying() || !finite(timestamp) || !video.videoWidth) return;
     const imageSize = [video.videoWidth, video.videoHeight];
     const age = timestamp - (state.result?.timestamp ?? -Infinity);
-    const valid = age >= -0.000002 && age <= 0.25;
+    const valid = age >= -0.000002 && age <= 0.40;
+    const predictionValid = age >= -0.000002 && age <= 0.25;
     const started = performance.now();
     if (state.overlayFrame?.timestamp !== timestamp) {
       const source = state.mediaFrame?.captured && state.mediaFrame.timestamp === timestamp ? decodedFrame : video;
@@ -483,7 +484,7 @@
       tracks: valid ? rawTracks().map(track => AstraMotion.alignTrack(track, timestamp, imageSize)).filter(Boolean) : [],
       observations: valid ? AstraMotion.alignObservations(state.result?.observations,rawTracks(),timestamp,state.result.timestamp,imageSize,state.overlayReference,state.overlayFrame.pixels) : [],
       traditional_observations: valid && $("showTraditional").checked ? AstraMotion.alignObservations(state.result?.traditional_observations,[],timestamp,state.result.timestamp,imageSize,state.overlayReference,state.overlayFrame.pixels) : [],
-      future_prediction: $("showPrediction").checked && valid && state.result?.prediction_enabled !== false
+      future_prediction: $("showPrediction").checked && predictionValid && state.result?.prediction_enabled !== false
         ? AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize) : disabledPrediction()};
     drawFrame();
     canvas.dataset.overlay = JSON.stringify({timestamp,observation_timestamp:state.result?.timestamp ?? null,
