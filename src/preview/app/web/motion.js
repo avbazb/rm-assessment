@@ -63,5 +63,85 @@
     if (Math.hypot(dx, dy) > limit || center[0] < 0 || center[1] < 0 || center[0] >= imageSize[0] || center[1] >= imageSize[1]) return null;
     return {...track, center, bbox: track.bbox.map((v, i) => v + (i % 2 ? dy : dx)), display_age_s: dt};
   }
-  globalThis.AstraMotion = {forecast, alignTrack};
+  // Pixel matching is for drawing only. It never creates tracks, measured
+  // lamp endpoints, PnP inputs, or hit-point predictions.
+  function overlayPixels(rgba, width, height, imageWidth, imageHeight) {
+    const red = new Float32Array(width * height), blue = new Float32Array(width * height);
+    for (let i = 0, j = 0; i < red.length; i++, j += 4) {
+      const light = (rgba[j] + 2 * rgba[j + 1] + rgba[j + 2]) / 4;
+      const color = .4 * (rgba[j] - rgba[j + 2]);
+      red[i] = light + color; blue[i] = light - color;
+    }
+    return {red, blue, width, height, scaleX: width / imageWidth, scaleY: height / imageHeight, templates: new Map()};
+  }
+  function templateFor(reference, obs) {
+    const key = `${obs.color}:${obs.bbox.join(',')}`;
+    if (reference.templates.has(key)) return reference.templates.get(key);
+    const values = obs.color === 'red' ? reference.red : reference.blue;
+    const [a,b,c,d] = obs.bbox, sx = reference.scaleX, sy = reference.scaleY;
+    const padX = Math.max(2, (c-a)*sx*.12), padY = Math.max(2, (d-b)*sy*.12);
+    const x0 = Math.max(1, Math.floor(a*sx-padX)), y0 = Math.max(1, Math.floor(b*sy-padY));
+    const x1 = Math.min(reference.width-2, Math.ceil(c*sx+padX)), y1 = Math.min(reference.height-2, Math.ceil(d*sy+padY));
+    const points = [], used = new Set(); let sum = 0, square = 0;
+    for (let y = 0; y < 7; y++) for (let x = 0; x < 9; x++) {
+      const px = Math.round(x0+(x1-x0)*x/8), py = Math.round(y0+(y1-y0)*y/6), index = py*reference.width+px;
+      if (used.has(index)) continue;
+      used.add(index); const v = values[index]; points.push([px,py,v]); sum += v; square += v*v;
+    }
+    const variance = square-sum*sum/points.length;
+    const result = points.length >= 12 && variance/points.length >= 16 ? {points,sum,variance,x0,y0,x1,y1} : null;
+    reference.templates.set(key, result);
+    return result;
+  }
+  function matchOverlay(reference, current, obs, dt, track) {
+    if (!reference || !current || reference.width !== current.width || reference.height !== current.height) return null;
+    const template = templateFor(reference, obs);
+    if (!template) return null;
+    const values = obs.color === 'red' ? current.red : current.blue, n = template.points.length;
+    const hint = track?.velocity?.every(finite) ? [track.velocity[0]*dt*reference.scaleX, track.velocity[1]*dt*reference.scaleY] : [0,0];
+    const radius = Math.min(48, Math.max(12, Math.ceil(12+100*dt), Math.ceil(Math.hypot(...hint)+6)));
+    const minX = Math.max(-radius, -template.x0), maxX = Math.min(radius, current.width-1-template.x1);
+    const minY = Math.max(-radius, -template.y0), maxY = Math.min(radius, current.height-1-template.y1);
+    function score(dx,dy) {
+      let sum = 0, square = 0, cross = 0;
+      for (const [x,y,a] of template.points) { const b = values[(y+dy)*current.width+x+dx]; sum += b; square += b*b; cross += a*b; }
+      const variance = square-sum*sum/n;
+      if (variance/n < 16) return -1;
+      return (cross-template.sum*sum/n)/Math.sqrt(template.variance*variance);
+    }
+    let best = {score:-1,rank:-Infinity,dx:0,dy:0};
+    function consider(dx,dy) {
+      if (dx < minX || dx > maxX || dy < minY || dy > maxY) return;
+      const value = score(dx,dy), rank = value-.0002*Math.hypot(dx-hint[0],dy-hint[1]);
+      if (rank > best.rank) best = {score:value,rank,dx,dy};
+    }
+    consider(0,0); consider(Math.round(hint[0]),Math.round(hint[1]));
+    for (let dy=minY;dy<=maxY;dy+=3) for (let dx=minX;dx<=maxX;dx+=3) consider(dx,dy);
+    const coarse = best;
+    for (let dy=coarse.dy-2;dy<=coarse.dy+2;dy++) for (let dx=coarse.dx-2;dx<=coarse.dx+2;dx++) consider(dx,dy);
+    if (best.score < .65) return null;
+    return {dx:best.dx/reference.scaleX,dy:best.dy/reference.scaleY,score:best.score};
+  }
+  function alignObservations(observations, tracks, timestamp, referenceTimestamp, imageSize, reference, current) {
+    const dt = timestamp-referenceTimestamp;
+    if (!finite(dt) || dt < -.000002 || dt > .25) return [];
+    return (observations || []).map((obs,index) => {
+      if (!obs.center?.every(finite) || !obs.bbox?.every(finite)) return null;
+      const track = (tracks || []).find(t => t.observation_index === index || obs.track_id != null && t.track_id === obs.track_id);
+      const measured = dt <= .000002;
+      const matched = measured ? {dx:0,dy:0,score:1} : matchOverlay(reference,current,obs,dt,track);
+      const predicted = !matched && track ? alignTrack(track,timestamp,imageSize) : null;
+      if (!matched && !predicted) return null;
+      const dx = matched ? matched.dx : predicted.center[0]-obs.center[0];
+      const dy = matched ? matched.dy : predicted.center[1]-obs.center[1];
+      const center = [obs.center[0]+dx,obs.center[1]+dy];
+      if (center[0]<0 || center[1]<0 || center[0]>=imageSize[0] || center[1]>=imageSize[1]) return null;
+      return {...obs,center,bbox:obs.bbox.map((v,i)=>v+(i%2?dy:dx)),display_index:index,
+        display_alignment:measured?'measured':matched?'image_translation':'kalman',display_age_s:dt,
+        display_match_score:matched?.score ?? null,
+        display_corners:matched && obs.geometry_valid && Array.isArray(obs.corners) ? obs.corners.map(p=>[p[0]+dx,p[1]+dy]) : null,
+        geometry_valid:measured && obs.geometry_valid,corners:measured?obs.corners:null};
+    }).filter(Boolean);
+  }
+  globalThis.AstraMotion = {forecast, alignTrack, overlayPixels, alignObservations};
 })();

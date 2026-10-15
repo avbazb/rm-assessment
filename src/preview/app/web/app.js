@@ -46,7 +46,8 @@
     processed: 0, startedAt: null, completions: [], lastRequest: null, requestHistory: [], timingHistory: [],
     ready: false, preparedMode: null, preparingMode: null, imageReady: false, exporting: false,
     horizon: 0.15, predictionEnabled: false, analysisController: null, failed: false,
-    view: null, displayCompletions: [], displayCount: 0, lastDisplayTime: null, lastDetailAt: 0
+    view: null, displayCompletions: [], displayCount: 0, lastDisplayTime: null, lastDetailAt: 0,
+    overlayReference: null, overlayFrame: null
   };
   try {
     const saved = JSON.parse(localStorage.getItem("astra-calibration") || "null");
@@ -220,6 +221,7 @@
     state.pointMode = false;
     state.failed = false;
     state.view = null; state.lastDisplayTime = null; state.displayCompletions = []; state.displayCount = 0;
+    state.overlayReference = null; state.overlayFrame = null;
     $("stage").dataset.pointMode = "false";
     if (clear) { state.result = null; state.snapshot = null; state.presentedAt = null; state.selectedIndex = -1; state.selectedTrack = null; clearCanvas(); renderTargets(); }
     renderImpact();
@@ -407,6 +409,7 @@
       if (finite(result.timestamp) && Math.abs(result.timestamp - timestamp) > 0.000002) throw new Error("画面时间校验失败");
       const renderStarted = performance.now();
       state.snapshot = snapshot;
+      state.overlayReference = overlayPixels(snapshot, width, height);
       state.result = result;
       state.presentedAt = timestamp;
       canvas.dataset.frameTimestamp = timestamp.toFixed(6);
@@ -457,16 +460,37 @@
   function isPlaying() { return (state.source === "video" || state.source === "camera") && !video.paused && !video.ended && !video.seeking && !state.scrubbing; }
   function rawTracks() { return [...(state.result?.tracks || []), ...(state.result?.tentative_tracks || [])]; }
   function disabledPrediction() { return {enabled: false, status: "disabled", target_timestamp: null, tracks: []}; }
+  const overlayCanvas = document.createElement("canvas");
+  const overlayContext = overlayCanvas.getContext("2d", {willReadFrequently:true});
+  function overlayPixels(source, width, height) {
+    const smallWidth = Math.min(384,width), smallHeight = Math.max(1,Math.round(height*smallWidth/width));
+    resizeFrameCanvas(overlayCanvas,smallWidth,smallHeight);
+    overlayContext.drawImage(source,0,0,smallWidth,smallHeight);
+    try { return AstraMotion.overlayPixels(overlayContext.getImageData(0,0,smallWidth,smallHeight).data,smallWidth,smallHeight,width,height); }
+    catch (_) { return null; }
+  }
   function renderLiveFrame(timestamp) {
     if (!isPlaying() || !finite(timestamp) || !video.videoWidth) return;
     const imageSize = [video.videoWidth, video.videoHeight];
     const age = timestamp - (state.result?.timestamp ?? -Infinity);
     const valid = age >= -0.000002 && age <= 0.25;
+    const started = performance.now();
+    if (state.overlayFrame?.timestamp !== timestamp) {
+      const source = state.mediaFrame?.captured && state.mediaFrame.timestamp === timestamp ? decodedFrame : video;
+      state.overlayFrame = {timestamp,pixels:overlayPixels(source,...imageSize)};
+    }
     state.view = {timestamp,
       tracks: valid ? rawTracks().map(track => AstraMotion.alignTrack(track, timestamp, imageSize)).filter(Boolean) : [],
+      observations: valid ? AstraMotion.alignObservations(state.result?.observations,rawTracks(),timestamp,state.result.timestamp,imageSize,state.overlayReference,state.overlayFrame.pixels) : [],
+      traditional_observations: valid && $("showTraditional").checked ? AstraMotion.alignObservations(state.result?.traditional_observations,[],timestamp,state.result.timestamp,imageSize,state.overlayReference,state.overlayFrame.pixels) : [],
       future_prediction: $("showPrediction").checked && valid && state.result?.prediction_enabled !== false
         ? AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize) : disabledPrediction()};
     drawFrame();
+    canvas.dataset.overlay = JSON.stringify({timestamp,observation_timestamp:state.result?.timestamp ?? null,
+      raw_count:state.result?.observations?.length ?? 0,displayed_count:state.view.observations.length,
+      traditional_count:state.view.traditional_observations.length,tracks:state.view.tracks.length,
+      image_aligned:state.view.observations.filter(o=>o.display_alignment==='image_translation').length,
+      render_ms:performance.now()-started});
     const now = performance.now();
     if (state.lastDisplayTime !== timestamp) {
       state.lastDisplayTime = timestamp; state.displayCount++;
@@ -627,7 +651,7 @@
   }
   function drawFrame() {
     const live = state.view && isPlaying();
-    const source = live ? video : state.snapshot;
+    const source = live ? state.mediaFrame?.captured && state.mediaFrame.timestamp === state.view.timestamp ? decodedFrame : video : state.snapshot;
     if (!source) return;
     const width = live ? video.videoWidth : source.width, height = live ? video.videoHeight : source.height;
     if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
@@ -653,14 +677,7 @@
       }
       if (!track.observed) drawPrediction(track.center, futureFor(track.track_id), unit);
     });
-    const observations = (state.result?.observations || []).map((obs, index) => {
-      if (!live) return obs;
-      const track = trackFor(obs, index);
-      if (!track) return null;
-      const dx = track.center[0] - obs.center[0], dy = track.center[1] - obs.center[1];
-      return {...obs, bbox: obs.bbox.map((v, i) => v + (i % 2 ? dy : dx)), center: track.center,
-        geometry_valid: false, corners: null, display_track: track, display_index: index};
-    }).filter(Boolean);
+    const observations = live ? state.view.observations : state.result?.observations || [];
     observations.forEach((obs, displayIndex) => {
       const index = obs.display_index ?? displayIndex;
       const color = obs.color === "red" ? palette["lamp-red"] : obs.color === "blue" ? palette["lamp-blue"] : palette["geometry"];
@@ -670,7 +687,7 @@
         ctx.strokeStyle = color; ctx.lineWidth = (selected ? 2.5 : 1.5) * unit;
         ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
         const id = idFor(obs, index);
-        const label = `${live ? "跟踪 " : obs.source === "classical" ? "传统 " : ""}${id != null ? `#${id}  ` : ""}${finite(obs.score) ? `${num(obs.score * 100, 1)}%` : ""}`;
+        const label = `${live ? trackFor(obs,index) ? "跟踪 " : "检测 " : obs.source === "classical" ? "传统 " : ""}${id != null ? `#${id}  ` : ""}${finite(obs.score) ? `${num(obs.score * 100, 1)}%` : ""}`;
         if (label) {
           const padding = 4 * unit, textWidth = ctx.measureText(label).width;
           const top = Math.max(0, y1 - labelSize - padding * 2), left = Math.min(Math.max(0, x1), Math.max(0, canvas.width - textWidth - padding * 2));
@@ -678,11 +695,14 @@
           ctx.fillStyle = palette["stage-text"]; ctx.fillText(label, left + padding, top + labelSize + padding / 2);
         }
       }
-      if ($("showLamps").checked && obs.geometry_valid && !guarded(obs) && Array.isArray(obs.corners) && obs.corners.length === 4 && obs.corners.every(pair)) {
+      const lampCorners = live ? obs.display_corners : obs.corners;
+      if ($("showLamps").checked && (live ? lampCorners : obs.geometry_valid) && !guarded(obs) && Array.isArray(lampCorners) && lampCorners.length === 4 && lampCorners.every(pair)) {
         ctx.strokeStyle = palette.geometry; ctx.lineWidth = 2 * unit;
-        ctx.beginPath(); obs.corners.forEach((point, n) => n ? ctx.lineTo(...point) : ctx.moveTo(...point)); ctx.closePath(); ctx.stroke();
+        if (live) ctx.setLineDash([4*unit,3*unit]);
+        ctx.beginPath(); lampCorners.forEach((point, n) => n ? ctx.lineTo(...point) : ctx.moveTo(...point)); ctx.closePath(); ctx.stroke();
+        ctx.setLineDash([]);
         ctx.fillStyle = palette.geometry;
-        obs.corners.forEach(point => { ctx.beginPath(); ctx.arc(point[0], point[1], 2.5 * unit, 0, Math.PI * 2); ctx.fill(); });
+        lampCorners.forEach(point => { ctx.beginPath(); ctx.arc(point[0], point[1], 2.5 * unit, 0, Math.PI * 2); ctx.fill(); });
       }
       const pose = poseFor(obs, index);
       const orientation = pose?.orientation_readout;
@@ -695,8 +715,8 @@
       }
       drawPrediction(trackFor(obs, index)?.center ?? obs.center, futureFor(idFor(obs, index)), unit);
     });
-    if (!live && $("showTraditional").checked && state.result?.detection_mode !== "classical") {
-      (state.result?.traditional_observations || []).forEach(obs => {
+    if ($("showTraditional").checked && state.result?.detection_mode !== "classical") {
+      (live ? state.view.traditional_observations : state.result?.traditional_observations || []).forEach(obs => {
         if (!Array.isArray(obs.bbox) || obs.bbox.length !== 4 || !obs.bbox.every(finite)) return;
         const [x1,y1,x2,y2] = obs.bbox;
         ctx.strokeStyle = palette.geometry; ctx.lineWidth = unit;
