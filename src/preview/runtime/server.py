@@ -102,7 +102,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path.startswith('/api/imports/'):
                 job = self.server.media.import_status(path.removeprefix('/api/imports/'))
                 self.json_response({'job': job} if job else {'error': '导入任务不存在'}, 200 if job else 404)
-            elif path in ('/', '/index.html', '/impact.html', '/motion.html', '/pose.html', '/styles.css', '/motion.js', '/app.js'):
+            elif path in ('/', '/index.html', '/impact.html', '/motion.html', '/pose.html', '/spin.html', '/styles.css', '/motion.js', '/spin.js', '/app.js'):
                 self.file_response(self.server.root/'app/web'/('index.html' if path=='/' else path[1:]))
             else:
                 self.json_response({'error': '内容不存在'}, 404)
@@ -136,7 +136,8 @@ class Handler(BaseHTTPRequestHandler):
                     frame_format='rgba8' if self.headers.get('X-Frame-Encoding')=='rgba8' else 'encoded',
                     frame_width=int(self.headers.get('X-Frame-Width','0')),
                     frame_height=int(self.headers.get('X-Frame-Height','0')),
-                    prediction_enabled=prediction_switch == '1')
+                    prediction_enabled=prediction_switch == '1',
+                    rotation_options=json.loads(unquote(self.headers['X-Rotation'])) if self.headers.get('X-Rotation') else None)
                 result['request_body_ms'] = body_ms
                 self.json_response(result)
             elif url.path == '/api/impact':

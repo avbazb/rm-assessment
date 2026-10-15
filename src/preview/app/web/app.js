@@ -4,9 +4,10 @@
   const page = document.body.dataset.page || "detection";
   const impactPage = page === "impact";
   const motionPage = page === "motion";
+  const spinPage = page === "spin";
   const posePage = page === "pose";
-  const predictionPage = motionPage || page === "detection";
-  const pageTitle = {detection: "检测预览", motion: "运动预测", pose: "三维位姿", impact: "落点分析"}[page] || "检测预览";
+  const predictionPage = motionPage || spinPage || page === "detection";
+  const pageTitle = {detection: "检测预览", motion: "运动预测", spin: "旋转目标", pose: "三维位姿", impact: "落点分析"}[page] || "检测预览";
   const $ = id => document.getElementById(id);
   const finite = value => typeof value === "number" && Number.isFinite(value);
   const pair = value => Array.isArray(value) && value.length >= 2 && value.slice(0, 2).every(finite);
@@ -47,7 +48,7 @@
     ready: false, preparedMode: null, preparingMode: null, imageReady: false, exporting: false,
     horizon: 0.15, predictionEnabled: false, analysisController: null, failed: false,
     view: null, displayCompletions: [], displayCount: 0, lastDisplayTime: null, lastDetailAt: 0,
-    overlayReference: null, overlayFrame: null
+    overlayReference: null, overlayFrame: null, spinTarget: null, spinView: null
   };
   try {
     const saved = JSON.parse(localStorage.getItem("astra-calibration") || "null");
@@ -63,6 +64,7 @@
       <nav class="navigation" aria-label="主导航">
         <a href="/" ${page === "detection" ? 'aria-current="page"' : ""}>检测预览</a>
         <a href="/motion.html" ${motionPage ? 'aria-current="page"' : ""}>运动预测</a>
+        <a href="/spin.html" ${spinPage ? 'aria-current="page"' : ""}>旋转目标</a>
         <a href="/pose.html" ${posePage ? 'aria-current="page"' : ""}>三维位姿</a>
         <a href="/impact.html" ${impactPage ? 'aria-current="page"' : ""}>落点分析</a>
       </nav>
@@ -102,6 +104,7 @@
       <aside class="inspector" aria-label="目标状态">
         <div class="section-heading"><h2>目标状态</h2><span id="targetCount" class="count">0</span></div>
         <table class="target-table"><thead><tr><th>ID</th><th>评分 / 置信度</th><th>位置 · px</th></tr></thead><tbody id="targetRows"><tr class="empty-row"><td colspan="3">等待检测</td></tr></tbody></table>
+        ${spinPage ? `<section class="spin-controls"><div class="section-heading"><h2>旋转状态</h2><span class="target-state" id="spinStatus">等待观测</span></div><div class="dialog-grid"><label class="field">装甲板数量<select id="spinPlateCount"><option value="4">4</option><option value="3">3</option><option value="2">2</option></select></label><label class="field">旋转半径 · m<input id="spinRadius" type="number" min="0.05" max="1" step="0.01" value="0.25"></label><label class="field">弹速 · m/s<input id="spinSpeed" type="number" min="1" max="100" step="1" value="15"></label><label class="field">执行延迟 · ms<input id="spinExecution" type="number" min="0" max="500" step="10" value="30"></label></div><div class="control-row"><button id="spinSelectTarget">锁定所选目标</button><button id="spinResetTarget">重新选择</button></div><dl class="measurements"><div class="measurement"><dt>旋转目标</dt><dd id="spinTarget">自动选择</dd></div><div class="measurement"><dt>角速度 · rad/s</dt><dd id="spinOmega">—</dd></div><div class="measurement"><dt>角加速度 · rad/s²</dt><dd id="spinAlpha">—</dd></div><div class="measurement"><dt>有效帧 / 时长</dt><dd id="spinSamples">—</dd></div><div class="measurement"><dt>观测年龄 · ms</dt><dd id="spinAge">—</dd></div><div class="measurement"><dt>预测板位</dt><dd id="spinSlot">—</dd></div><div class="measurement"><dt>窗口决策</dt><dd id="spinWindow">等待</dd></div><div class="measurement"><dt>抵达总提前 · ms</dt><dd id="spinArrival">—</dd></div></dl></section>` : ''}
         <section id="targetDetail" class="target-detail" hidden>
           <div class="detail-heading"><h3 id="selectedTitle">目标</h3><span class="target-state" id="selectedState">—</span></div>
           <dl class="measurements">
@@ -222,6 +225,7 @@
     state.failed = false;
     state.view = null; state.lastDisplayTime = null; state.displayCompletions = []; state.displayCount = 0;
     state.overlayReference = null; state.overlayFrame = null;
+    state.spinTarget = null; state.spinView = null;
     $("stage").dataset.pointMode = "false";
     if (clear) { state.result = null; state.snapshot = null; state.presentedAt = null; state.selectedIndex = -1; state.selectedTrack = null; clearCanvas(); renderTargets(); }
     renderImpact();
@@ -370,6 +374,7 @@
       if (epoch !== state.epoch) return;
       const headersFor = value => {
         const headers = {...value.headers};
+        if (spinPage) headers["X-Rotation"] = encodeURIComponent(JSON.stringify(rotationSettings()));
         if (state.calibration) headers["X-Calibration"] = encodeURIComponent(JSON.stringify(state.calibration));
         return headers;
       };
@@ -410,6 +415,7 @@
       const renderStarted = performance.now();
       state.snapshot = snapshot;
       state.overlayReference = overlayPixels(snapshot, width, height);
+      if (spinPage) result.future_prediction = AstraSpin.strict(result.future_prediction);
       state.result = result;
       state.presentedAt = timestamp;
       canvas.dataset.frameTimestamp = timestamp.toFixed(6);
@@ -485,7 +491,7 @@
       observations: valid ? AstraMotion.alignObservations(state.result?.observations,rawTracks(),timestamp,state.result.timestamp,imageSize,state.overlayReference,state.overlayFrame.pixels) : [],
       traditional_observations: valid && $("showTraditional").checked ? AstraMotion.alignObservations(state.result?.traditional_observations,[],timestamp,state.result.timestamp,imageSize,state.overlayReference,state.overlayFrame.pixels) : [],
       future_prediction: $("showPrediction").checked && predictionValid && state.result?.prediction_enabled !== false
-        ? AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize) : disabledPrediction()};
+        ? (spinPage ? AstraSpin.strict(AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize)) : AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize)) : disabledPrediction()};
     drawFrame();
     canvas.dataset.overlay = JSON.stringify({timestamp,observation_timestamp:state.result?.timestamp ?? null,
       raw_count:state.result?.observations?.length ?? 0,displayed_count:state.view.observations.length,
@@ -590,6 +596,28 @@
       drawPoseView();
     }
   }
+  function rotationSettings() {
+    return {plate_count: Number($("spinPlateCount").value), radius_m: Number($("spinRadius").value), projectile_speed_mps: Number($("spinSpeed").value), execution_delay_s: Number($("spinExecution").value)/1000, target_track: state.spinTarget};
+  }
+  const spinReasons = {prediction_disabled:"预测已关闭",waiting_for_observations:"等待可靠灯条",stale_observation:"观测不足或已过期",rotation_not_stable:"旋转状态建立中",waiting_for_window:"等待窗口",camera_calibration_required:"等待相机标定",clock_mismatch:"时间不匹配",current_frame_unobserved:"当前帧无可靠观测",ready:"窗口可用"};
+  function renderSpin(timestamp) {
+    const raw=state.result?.rotation;
+    const frame=raw ? {...raw,enabled:$("showPrediction").checked} : null;
+    state.spinView=AstraSpin.project(frame,timestamp??0,state.horizon,[canvas.width,canvas.height]);
+    const view=state.spinView;
+    $("spinStatus").textContent=spinReasons[view.reason]||"等待窗口";
+    $("spinTarget").textContent=state.spinTarget==null?"自动选择":`目标 ${state.spinTarget}`;
+    const established=raw?.state && raw.samples>=raw.config.min_observations && raw.measurement_span_s>=raw.config.min_duration_s && Math.sqrt(raw.covariance[4][4])<=1;
+    $("spinOmega").textContent=established?num(raw.state[4],3):"—"; $("spinAlpha").textContent=established?num(raw.state[5],3):"—";
+    $("spinSelectTarget").disabled=state.selectedTrack==null;
+    $("spinSamples").textContent=raw?`${raw.samples} / ${num(raw.measurement_span_s,3)} s`:"—";
+    $("spinAge").textContent=finite(raw?.last_observation_timestamp)?num(Math.max(0,timestamp-raw.last_observation_timestamp)*1000,1):"—";
+    $("spinSlot").textContent=view.selected_plate==null?"—":`P${view.selected_plate}`;
+    $("spinWindow").textContent=!$("showPrediction").checked?"已关闭":view.allow_fire?"窗口可用":"等待窗口";
+    const selected=raw?.decision?.candidates?.find(c=>c.plate===raw.decision.selected_plate);
+    $("spinArrival").textContent=num(selected?.prediction_horizon_s*1000,1);
+    canvas.dataset.rotation=JSON.stringify({reason:view.reason,enabled:view.enabled,candidates:view.candidates.filter(c=>c.valid),samples:raw?.samples??0,allow_fire:view.allow_fire});
+  }
   function strokeLine(a, b, color, width) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); }
   function drawPrediction(center, prediction, unit) {
     if (!$("showPrediction").checked || !["ready", "estimated"].includes(prediction?.status) || !pair(prediction.center)) return;
@@ -661,6 +689,7 @@
     if (live) { canvas.dataset.frameTimestamp = state.view.timestamp.toFixed(6); canvas.dataset.presentation = "media-clock-filtered-state"; $("stageEmpty").hidden = true; }
     else { state.view = null; canvas.dataset.frameTimestamp = num(state.presentedAt, 6); canvas.dataset.presentation = "measured-frame"; }
     const unit = Math.max(1, canvas.width / 640);
+    if (spinPage) renderSpin(live ? state.view.timestamp : state.presentedAt);
     const labelSize = 14 * unit;
     ctx.font = `600 ${labelSize}px "Segoe UI", "Microsoft YaHei", sans-serif`;
     tracks().forEach(track => {
@@ -676,7 +705,7 @@
         ctx.strokeStyle = palette.geometry; ctx.lineWidth = 2 * unit;
         ctx.beginPath(); ctx.arc(...track.center, 4 * unit, 0, Math.PI * 2); ctx.stroke();
       }
-      if (!track.observed) drawPrediction(track.center, futureFor(track.track_id), unit);
+      if ((!spinPage || !state.spinView?.candidates.some(p=>p.valid)) && !track.observed) drawPrediction(track.center, futureFor(track.track_id), unit);
     });
     const observations = live ? state.view.observations : state.result?.observations || [];
     observations.forEach((obs, displayIndex) => {
@@ -714,8 +743,16 @@
         strokeLine(axes[0], axes[2], palette.geometry, 2 * unit);
         strokeLine(axes[0], axes[3], palette["lamp-blue"], 2 * unit);
       }
-      drawPrediction(trackFor(obs, index)?.center ?? obs.center, futureFor(idFor(obs, index)), unit);
+      if (!spinPage || !state.spinView?.candidates.some(p=>p.valid)) drawPrediction(trackFor(obs, index)?.center ?? obs.center, futureFor(idFor(obs, index)), unit);
     });
+    if (spinPage && state.spinView) {
+      const markers = state.spinView.candidates.filter(p => p.valid && pair(p.center));
+      for (const marker of markers) {
+        ctx.strokeStyle = palette.prediction; ctx.lineWidth = 2 * unit;
+        ctx.beginPath(); ctx.arc(...marker.center, 6 * unit, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = palette.prediction; ctx.fillText(`P${marker.plate} +${Math.round(state.horizon * 1000)} ms`, Math.max(0, Math.min(canvas.width-120*unit, marker.center[0]+8*unit)), Math.max(16*unit, marker.center[1]-8*unit));
+      }
+    }
     if ($("showTraditional").checked && state.result?.detection_mode !== "classical") {
       (live ? state.view.traditional_observations : state.result?.traditional_observations || []).forEach(obs => {
         if (!Array.isArray(obs.bbox) || obs.bbox.length !== 4 || !obs.bbox.every(finite)) return;
@@ -874,6 +911,11 @@
     askFrame();
   }
   if (predictionPage) ["input", "change"].forEach(name => $("horizonMs").addEventListener(name, selectHorizon));
+  if (spinPage) {
+    ["spinPlateCount","spinRadius","spinSpeed","spinExecution"].forEach(id=>$(id).addEventListener("change",()=>{state.spinView=null;if(state.result)state.result.rotation=null;showLoadedFrame();askFrame();}));
+    $("spinSelectTarget").addEventListener("click",()=>{if(state.selectedTrack==null)return;state.spinTarget=state.selectedTrack;state.spinView=null;if(state.result)state.result.rotation=null;askFrame();});
+    $("spinResetTarget").addEventListener("click",()=>{resetEpoch();showLoadedFrame();askFrame();});
+  }
   if (posePage) {
     ["poseView", "poseYaw", "posePitch"].forEach(id => $(id).addEventListener("input", drawPoseView));
     $("resetPoseView").addEventListener("click", () => { $("poseYaw").value = 20; $("posePitch").value = -15; drawPoseView(); });

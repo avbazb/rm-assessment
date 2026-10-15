@@ -1,2 +1,2 @@
-VERSION = '1.4.2'
-BUILD_ID = '20261015-live-overlay-v2'
+VERSION = '1.5.0'
+BUILD_ID = '20261015-rotation-restored-v2'

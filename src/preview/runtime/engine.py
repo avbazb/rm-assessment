@@ -17,6 +17,7 @@ from astra_competition.forecasting import MotionForecaster, forecast
 from astra_competition.pose_filter import PoseContinuity
 from .detection_pipeline import DetectionPipeline
 from .orientation_guard import check_orientation
+from .rotation import RotationPreview, options as rotation_options_validated
 
 
 class Busy(Exception):
@@ -109,8 +110,18 @@ class Engine:
         result['enabled'] = True
         return estimates, result
 
+    def _rotation_output(self, state, settings, observations, tracks, timestamp, calibration, enabled, horizon, age=0.):
+        if settings is None:
+            state.pop('rotation', None)
+            return None
+        current=state.get('rotation')
+        if current is None or current.settings!=settings:
+            current=state['rotation']=RotationPreview(settings)
+        current.update(observations, tracks, timestamp, calibration)
+        return current.publish(timestamp+age, enabled, horizon)
+
     def analyze(self, payload, session, epoch, sequence, timestamp, horizon=.15, calibration=None, mode='fusion',
-                frame_format='encoded', frame_width=None, frame_height=None, prediction_enabled=True):
+                frame_format='encoded', frame_width=None, frame_height=None, prediction_enabled=True, rotation_options=None):
         if not self.lock.acquire(False):
             raise Busy('正在处理画面，请稍后重试')
         started = time.perf_counter()
@@ -121,6 +132,7 @@ class Engine:
                 raise ValueError('检测方式无效')
             if not isinstance(prediction_enabled, bool):
                 raise ValueError('预测开关无效')
+            rotation_options=rotation_options_validated(rotation_options)
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', session):
                 raise ValueError('会话编号无效')
             if not 0 <= epoch <= 1_000_000_000 or sequence < 0:
@@ -168,6 +180,8 @@ class Engine:
                     out['motion_estimates'], out['future_prediction'] = self._motion_output(
                         state, tracks, measured, timestamp, (w, h), prediction_enabled, horizon, refresh=False)
                     out['prediction_enabled'] = prediction_enabled
+                    out['rotation'] = self._rotation_output(state, rotation_options, out['observations'], tracks,
+                        timestamp, calibration, prediction_enabled, horizon)
                     out['cache_hit'] = True
                     state.update(sequence=sequence, touched=now, response=copy.deepcopy(out))
                     return out
@@ -198,6 +212,8 @@ class Engine:
             stages['tracking_ms'] = (time.perf_counter()-stage_started)*1000
             stage_started = time.perf_counter()
             tracks = [*tracked['tracks'], *tracked['tentative_tracks']]
+            rotation = self._rotation_output(state, rotation_options, pose_observations, tracks, timestamp,
+                calibration, prediction_enabled, horizon, time.perf_counter()-started)
             estimates, prediction = self._motion_output(state, tracks, measured, timestamp, (w, h),
                                                         prediction_enabled, horizon)
             state['poses'].update(tracks, pose_observations, timestamp, calibration)
@@ -222,7 +238,7 @@ class Engine:
                        device='CPU', observations=observations, **tracked,
                        detection_mode=mode, classical_module=self.detector.VERSION,traditional_observations=traditional,
                        model_detections=models,detection_diagnostics=copy.deepcopy(self.detector.last_diagnostics),
-                       motion_estimates=estimates, future_prediction=prediction, prediction_enabled=prediction_enabled,
+                       motion_estimates=estimates, future_prediction=prediction, prediction_enabled=prediction_enabled, rotation=rotation,
                        camera_calibration=calibration, processing_ms=(time.perf_counter()-started)*1000,
                        stage_timings=stages,
                        input_frame=dict(pixel_sha256=digest, payload_sha256=hashlib.sha256(payload).hexdigest(),
