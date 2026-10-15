@@ -122,6 +122,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.body(1024)
                 self.json_response(self.server.engine.warmup(query.get('mode','fusion')))
             elif url.path == '/api/analyze':
+                prediction_switch = query.get('prediction', '1')
+                if prediction_switch not in ('0','1'):
+                    raise ValueError('预测开关无效')
                 body_started = time.perf_counter()
                 payload = self.body(32*1024*1024)
                 body_ms = (time.perf_counter()-body_started)*1000
@@ -132,7 +135,8 @@ class Handler(BaseHTTPRequestHandler):
                     query.get('mode','fusion'),
                     frame_format='rgba8' if self.headers.get('X-Frame-Encoding')=='rgba8' else 'encoded',
                     frame_width=int(self.headers.get('X-Frame-Width','0')),
-                    frame_height=int(self.headers.get('X-Frame-Height','0')))
+                    frame_height=int(self.headers.get('X-Frame-Height','0')),
+                    prediction_enabled=prediction_switch == '1')
                 result['request_body_ms'] = body_ms
                 self.json_response(result)
             elif url.path == '/api/impact':

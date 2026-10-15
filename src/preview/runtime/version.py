@@ -1,2 +1,2 @@
-VERSION = '1.4.0'
-BUILD_ID = '20261015-smooth-video-prediction500-v1'
+VERSION = '1.4.1'
+BUILD_ID = '20261015-prediction-toggle-v1'

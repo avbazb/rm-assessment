@@ -45,7 +45,7 @@
     impactPoint: null, impactResult: null, cameraStart: null, lastCaptureTime: null, mediaFrame: null,
     processed: 0, startedAt: null, completions: [], lastRequest: null, requestHistory: [], timingHistory: [],
     ready: false, preparedMode: null, preparingMode: null, imageReady: false, exporting: false,
-    horizon: 0.15, analysisController: null, failed: false,
+    horizon: 0.15, predictionEnabled: false, analysisController: null, failed: false,
     view: null, displayCompletions: [], displayCount: 0, lastDisplayTime: null, lastDetailAt: 0
   };
   try {
@@ -53,6 +53,7 @@
     if (saved && saved.value) { state.calibration = validateCalibrationInput(saved.value); state.calibrationName = saved.name || "已导入"; }
     const savedHorizon = Number(localStorage.getItem("astra-prediction-horizon-ms") ?? 150);
     if (finite(savedHorizon) && savedHorizon >= 0 && savedHorizon <= 500) state.horizon = savedHorizon / 1000;
+    state.predictionEnabled = localStorage.getItem("astra-prediction-enabled") === "1";
   } catch (_) { /* An unavailable browser store does not block preview. */ }
 
   document.getElementById("app").innerHTML = `
@@ -86,7 +87,7 @@
             <label class="checkbox-label"><input id="showBoxes" type="checkbox" checked>检测框</label>
             <label class="checkbox-label"><input id="showTraditional" type="checkbox" checked>传统框</label>
             <label class="checkbox-label"><input id="showLamps" type="checkbox" checked>灯条</label>
-            <label class="checkbox-label"><input id="showPrediction" type="checkbox" checked><span id="predictionLabel">预测 +0.150 s</span></label>
+            <label class="checkbox-label"><input id="showPrediction" type="checkbox" ${state.predictionEnabled ? "checked" : ""}><span id="predictionLabel">预测 +0.150 s</span></label>
             <label class="checkbox-label"><input id="showHistory" type="checkbox" ${predictionPage ? "checked" : ""}>历史轨迹</label>
             <label class="checkbox-label"><input id="showFiltered" type="checkbox" ${predictionPage ? "checked" : ""}>平滑中心</label>
             <label class="checkbox-label"><input id="showAxes" type="checkbox" ${posePage ? "checked" : ""}>坐标轴</label>
@@ -121,7 +122,7 @@
     <img id="sourceImage" class="hidden-media" alt="">
   `;
   const video = $("sourceVideo");
-  if (predictionPage) $("horizonMs").value = Math.round(state.horizon * 1000);
+  if (predictionPage) { $("horizonMs").value = Math.round(state.horizon * 1000); $("horizonMs").disabled = !$("showPrediction").checked; }
   $("predictionLabel").textContent = $("detailHorizon").textContent = `预测 +${state.horizon.toFixed(3)} s`;
   const sourceImage = $("sourceImage");
   const canvas = $("preview");
@@ -349,6 +350,7 @@
     const sequence = ++state.sequence;
     const mode = $("detectionMode").value;
     const horizon = state.horizon;
+    const predictionEnabled = $("showPrediction").checked;
     const sourceId = state.item?.id ?? null;
     const started = performance.now();
     let captureMs = 0, payloadMs = 0, requestMs = 0;
@@ -369,7 +371,7 @@
         if (state.calibration) headers["X-Calibration"] = encodeURIComponent(JSON.stringify(state.calibration));
         return headers;
       };
-      const query = new URLSearchParams({session: state.session, epoch: String(epoch), sequence: String(sequence), timestamp: timestamp.toFixed(6), horizon: String(horizon), mode});
+      const query = new URLSearchParams({session: state.session, epoch: String(epoch), sequence: String(sequence), timestamp: timestamp.toFixed(6), horizon: String(horizon), prediction: predictionEnabled ? "1" : "0", mode});
       state.lastRequest = {epoch, sequence, timestamp};
       const sendPayload = async value => {
         const requestStarted = performance.now();
@@ -398,6 +400,10 @@
       if (state.requestHistory.length > 40) state.requestHistory.shift();
       if (epoch !== state.epoch || mode !== $("detectionMode").value) return;
       if (horizon !== state.horizon) { askFrame(); return; }
+      if (!$("showPrediction").checked) {
+        result.motion_estimates = []; result.future_prediction = disabledPrediction(); result.prediction_enabled = false;
+      }
+      if (predictionEnabled !== $("showPrediction").checked) askFrame();
       if (finite(result.timestamp) && Math.abs(result.timestamp - timestamp) > 0.000002) throw new Error("画面时间校验失败");
       const renderStarted = performance.now();
       state.snapshot = snapshot;
@@ -450,6 +456,7 @@
   }
   function isPlaying() { return (state.source === "video" || state.source === "camera") && !video.paused && !video.ended && !video.seeking && !state.scrubbing; }
   function rawTracks() { return [...(state.result?.tracks || []), ...(state.result?.tentative_tracks || [])]; }
+  function disabledPrediction() { return {enabled: false, status: "disabled", target_timestamp: null, tracks: []}; }
   function renderLiveFrame(timestamp) {
     if (!isPlaying() || !finite(timestamp) || !video.videoWidth) return;
     const imageSize = [video.videoWidth, video.videoHeight];
@@ -457,7 +464,8 @@
     const valid = age >= -0.000002 && age <= 0.25;
     state.view = {timestamp,
       tracks: valid ? rawTracks().map(track => AstraMotion.alignTrack(track, timestamp, imageSize)).filter(Boolean) : [],
-      future_prediction: valid ? AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize) : {tracks: []}};
+      future_prediction: $("showPrediction").checked && valid && state.result?.prediction_enabled !== false
+        ? AstraMotion.forecast(state.result?.motion_estimates, timestamp + state.horizon, imageSize) : disabledPrediction()};
     drawFrame();
     const now = performance.now();
     if (state.lastDisplayTime !== timestamp) {
@@ -465,7 +473,7 @@
       state.displayCompletions = [...state.displayCompletions.filter(t => now - t < 2000), now];
     }
     canvas.dataset.displayCount = String(state.displayCount);
-    canvas.dataset.prediction = JSON.stringify({target_timestamp: timestamp + state.horizon,
+    canvas.dataset.prediction = JSON.stringify({enabled: $("showPrediction").checked, target_timestamp: $("showPrediction").checked ? timestamp + state.horizon : null,
       tracks: state.view.future_prediction.tracks.map(p => ({track_id:p.track_id,status:p.status,center:p.center,usable:p.usable}))});
     if (now - state.lastDetailAt >= 100) {
       state.lastDetailAt = now; renderDetail(); $("metricTime").textContent = num(timestamp, 3);
@@ -482,7 +490,7 @@
     return tracks().find(track => track.observation_index === index) || (obs.track_id != null ? tracks().find(track => track.track_id === obs.track_id || track.id === obs.track_id) : null);
   }
   function idFor(obs, index) { const track = trackFor(obs, index); return track?.track_id ?? track?.id ?? obs.track_id ?? null; }
-  function futureFor(id) { return id == null ? null : ((state.view?.future_prediction ?? state.result?.future_prediction)?.tracks || []).find(track => (track.track_id ?? track.id) === id); }
+  function futureFor(id) { return !$("showPrediction").checked || id == null ? null : ((state.view?.future_prediction ?? state.result?.future_prediction)?.tracks || []).find(track => (track.track_id ?? track.id) === id); }
   function selectedTrackState() { return tracks().find(track => (track.track_id ?? track.id) === state.selectedTrack) ?? null; }
   function motionFor(id) { return (state.result?.motion_estimates || []).find(track => track.track_id === id); }
   const predictionReasons = {tentative: "目标待确认", insufficient_measurements: "连续观测不足", unsupported_displacement: "提前量过大", uncertain: "预测不确定", outside_image: "预测超出画面", prediction_expired: "观测已过期", clock_mismatch: "时间不匹配"};
@@ -540,10 +548,10 @@
     $("detailRange").textContent = pose ? num(pose.range_m, 3) : "—";
     const rotation = pose?.orientation_readout ? pose.orientation_readout.rvec_for_display : pose?.orientation_status === "waiting" ? null : pose?.rvec_rad;
     $("detailRotation").textContent = Array.isArray(rotation) && rotation.every(finite) ? rotation.map(value => num(value, 3)).join(", ") : "—";
-    $("detailPrediction").textContent = pair(prediction?.center) ? xy(prediction.center) : "等待";
+    $("detailPrediction").textContent = !$("showPrediction").checked ? "—" : pair(prediction?.center) ? xy(prediction.center) : "等待";
     if (predictionPage) {
       const estimate = motionFor(id);
-      $("detailPredictionState").textContent = prediction?.status === "ready" ? "可用" : prediction?.status === "estimated" ? `估计 · ${predictionReasons[prediction.reason] || "待确认"}` : predictionReasons[prediction?.reason] || "等待连续观测";
+      $("detailPredictionState").textContent = !$("showPrediction").checked ? "已关闭" : prediction?.status === "ready" ? "可用" : prediction?.status === "estimated" ? `估计 · ${predictionReasons[prediction.reason] || "待确认"}` : predictionReasons[prediction?.reason] || "等待连续观测";
       $("detailPredictionTime").textContent = prediction ? `${num(prediction.observation_timestamp, 3)} / ${num(prediction.target_timestamp, 3)}` : "—";
       $("detailSamples").textContent = estimate ? `${estimate.samples} / ${num(estimate.measurement_span_s, 3)} s` : "—";
       $("detailAcceleration").textContent = xy(estimate?.acceleration);
@@ -823,7 +831,18 @@
     state.imageReady = true; showLoadedFrame(); askFrame(); updateControls();
   });
   sourceImage.addEventListener("error", () => { if (sourceImage.getAttribute("src")) notice("图片无法读取"); });
-  ["showBoxes", "showTraditional", "showLamps", "showPrediction", "showHistory", "showFiltered", "showAxes"].forEach(id => $(id).addEventListener("change", drawFrame));
+  ["showBoxes", "showTraditional", "showLamps", "showHistory", "showFiltered", "showAxes"].forEach(id => $(id).addEventListener("change", drawFrame));
+  $("showPrediction").addEventListener("change", () => {
+    const enabled = $("showPrediction").checked;
+    if (predictionPage) $("horizonMs").disabled = !enabled;
+    try { localStorage.setItem("astra-prediction-enabled", enabled ? "1" : "0"); } catch (_) { /* Keep the current switch. */ }
+    if (!enabled) {
+      if (state.result) { state.result.motion_estimates = []; state.result.future_prediction = disabledPrediction(); state.result.prediction_enabled = false; }
+      if (state.view) state.view.future_prediction = disabledPrediction();
+      canvas.dataset.prediction = JSON.stringify(disabledPrediction());
+    }
+    renderDetail(); drawFrame(); askFrame();
+  });
   function selectHorizon(event) {
     if (event.target.value.trim() === "") return;
     const value = Number(event.target.value);

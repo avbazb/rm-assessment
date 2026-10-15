@@ -31,6 +31,11 @@ class InferenceTimeout(TimeoutError):
     pass
 
 
+def disabled_prediction():
+    return dict(schema='astra.pixel-forecast.v1', enabled=False, status='disabled',
+                target_timestamp=None, tracks=[])
+
+
 class Engine:
     def __init__(self, model_path, request_timeout=8., warmup_timeout=30.):
         self.model_path = model_path
@@ -88,8 +93,24 @@ class Engine:
         finally:
             self.lock.release()
 
+    def _motion_output(self, state, tracks, measured, timestamp, size, enabled, horizon, refresh=True):
+        previous = state.get('prediction_enabled', False)
+        if not enabled:
+            if previous:
+                state['forecaster'] = MotionForecaster()
+            state['prediction_enabled'] = False
+            return [], disabled_prediction()
+        if not previous:
+            state['forecaster'] = MotionForecaster()
+        estimates = (state['forecaster'].update(tracks, measured, timestamp, size)
+                     if refresh or not previous else state['response']['motion_estimates'])
+        state['prediction_enabled'] = True
+        result = forecast(estimates, timestamp+horizon, size)
+        result['enabled'] = True
+        return estimates, result
+
     def analyze(self, payload, session, epoch, sequence, timestamp, horizon=.15, calibration=None, mode='fusion',
-                frame_format='encoded', frame_width=None, frame_height=None):
+                frame_format='encoded', frame_width=None, frame_height=None, prediction_enabled=True):
         if not self.lock.acquire(False):
             raise Busy('正在处理画面，请稍后重试')
         started = time.perf_counter()
@@ -98,6 +119,8 @@ class Engine:
                 raise ValueError('程序已关闭')
             if mode not in ('fusion','classical'):
                 raise ValueError('检测方式无效')
+            if not isinstance(prediction_enabled, bool):
+                raise ValueError('预测开关无效')
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', session):
                 raise ValueError('会话编号无效')
             if not 0 <= epoch <= 1_000_000_000 or sequence < 0:
@@ -140,9 +163,13 @@ class Engine:
                         raise ValueError('同一帧时间对应不同图像')
                     out = copy.deepcopy(state['response'])
                     out.update(sequence=sequence, processing_ms=0.)
-                    out['future_prediction'] = forecast(out['motion_estimates'], timestamp+horizon, (w, h))
+                    tracks = [*out['tracks'], *out['tentative_tracks']]
+                    measured = [tracking_measurement(o) for o in out['observations']]
+                    out['motion_estimates'], out['future_prediction'] = self._motion_output(
+                        state, tracks, measured, timestamp, (w, h), prediction_enabled, horizon, refresh=False)
+                    out['prediction_enabled'] = prediction_enabled
                     out['cache_hit'] = True
-                    state.update(sequence=sequence, touched=now)
+                    state.update(sequence=sequence, touched=now, response=copy.deepcopy(out))
                     return out
             else:
                 state = dict(epoch=epoch, signature=signature, tracker=ArmorTracker(),
@@ -171,7 +198,8 @@ class Engine:
             stages['tracking_ms'] = (time.perf_counter()-stage_started)*1000
             stage_started = time.perf_counter()
             tracks = [*tracked['tracks'], *tracked['tentative_tracks']]
-            estimates = state['forecaster'].update(tracks, measured, timestamp, (w, h))
+            estimates, prediction = self._motion_output(state, tracks, measured, timestamp, (w, h),
+                                                        prediction_enabled, horizon)
             state['poses'].update(tracks, pose_observations, timestamp, calibration)
             orientations = {key: history for key, history in state['orientations'].items()
                             if history and 0 <= timestamp-history[-1]['timestamp'] <= .1+1e-9}
@@ -194,7 +222,7 @@ class Engine:
                        device='CPU', observations=observations, **tracked,
                        detection_mode=mode, classical_module=self.detector.VERSION,traditional_observations=traditional,
                        model_detections=models,detection_diagnostics=copy.deepcopy(self.detector.last_diagnostics),
-                       motion_estimates=estimates, future_prediction=forecast(estimates, timestamp+horizon, (w, h)),
+                       motion_estimates=estimates, future_prediction=prediction, prediction_enabled=prediction_enabled,
                        camera_calibration=calibration, processing_ms=(time.perf_counter()-started)*1000,
                        stage_timings=stages,
                        input_frame=dict(pixel_sha256=digest, payload_sha256=hashlib.sha256(payload).hexdigest(),
@@ -216,7 +244,8 @@ class Engine:
         if (not math.isfinite(timestamp) or not math.isfinite(horizon) or not 0 <= horizon <= .5
                 or not -1e-6 <= timestamp-response['timestamp'] <= .25+1e-6):
             raise ValueError('预测时间无效或观测已过期')
-        result = forecast(response['motion_estimates'], timestamp+horizon, (response['width'], response['height']))
+        result = (forecast(response['motion_estimates'], timestamp+horizon, (response['width'], response['height']))
+                  if response.get('prediction_enabled', True) else disabled_prediction())
         result.update(session=session, epoch=epoch, sequence=response['sequence'],
                       state_timestamp=response['timestamp'], presentation_timestamp=timestamp,
                       selected_horizon_s=horizon, coordinate_frame='image_pixels',position_unit='px')
